@@ -1,0 +1,71 @@
+{
+    "name": "panicdevs/modulite",
+    "description": "Automatic Filament Panel Provider discovery for modular Laravel applications with multi-layer caching and performance optimization",
+    "type": "library",
+    "keywords": [
+        "laravel",
+        "filament",
+        "modular",
+        "panels",
+        "discovery",
+        "caching",
+        "performance",
+        "nwidart",
+        "modules",
+        "panicdevs"
+    ],
+    "homepage": "https://github.com/panicdevs/modulite",
+    "readme": "README.md",
+    "support": {
+        "issues": "https://github.com/panicdevs/modulite/issues",
+        "security": "https://github.com/panicdevs/modulite/security/advisories",
+        "source": "https://github.com/panicdevs/modulite",
+        "docs": "https://github.com/panicdevs/modulite#readme"
+    },
+    "funding": [
+        {
+            "type": "github",
+            "url": "https://github.com/sponsors/panicdevs"
+        }
+    ],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Armin Hooshmand",
+            "email": "NotifyHex@panicdevs.agency",
+            "homepage": "https://github.com/NotifyHex",
+            "role": "Developer"
+        },
+        {
+            "name": "PanicDevs",
+            "email": "hello@panicdevs.agency",
+            "homepage": "https://panicdevs.agency",
+            "role": "Organization"
+        }
+    ],
+    "require": {
+        "php": ">=8.2",
+        "filament/filament": "^4.0",
+        "nwidart/laravel-modules": "^11.0|^12.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "PanicDevs\\Modulite\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "PanicDevs\\Modulite\\Providers\\ModuliteServiceProvider"
+            ]
+        },
+        "branch-alias": {
+            "dev-main": "1.x-dev"
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

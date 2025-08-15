@@ -1,0 +1,96 @@
+# Dependencies
+/vendor/
+/node_modules/
+
+# Composer
+composer.phar
+composer.lock
+
+# Package files
+*.zip
+*.tar.gz
+*.tar.bz2
+*.rar
+
+# Logs
+*.log
+/storage/logs/
+/bootstrap/cache/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# IDE files
+/.vscode/
+/.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Mac specific
+.AppleDouble
+.LSOverride
+.DocumentRevisions-V100
+.fseventsd
+.TemporaryItems
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows specific
+desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
+
+# Linux specific
+*~
+.directory
+
+# PHP
+/.phpunit.cache
+/phpunit.xml
+/coverage/
+/.phpunit.result.cache
+
+# Testing
+/tests/temp/
+/tests/coverage/
+/build/
+
+# Cache
+/bootstrap/cache/
+/.php-cs-fixer.cache
+/.psalm/
+
+# Package development
+/docs/_site/
+/.sass-cache/
+
+# Laravel specific (for test apps)
+/public/hot
+/public/storage
+/storage/*.key
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+
+# Temporary files
+*.tmp
+*.temp
