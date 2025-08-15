@@ -58,9 +58,6 @@
             "providers": [
                 "PanicDevs\\Modulite\\Providers\\ModuliteServiceProvider"
             ]
-        },
-        "branch-alias": {
-            "dev-main": "1.x-dev"
         }
     },
     "config": {
