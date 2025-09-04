@@ -14,6 +14,7 @@ use Filament\Pages\Page;
 use Filament\Widgets\Widget;
 use PanicDevs\Modulite\Contracts\ComponentScannerInterface;
 use PanicDevs\Modulite\Contracts\CacheManagerInterface;
+use PanicDevs\Modulite\Contracts\ModuleResolverInterface;
 use RecursiveCallbackFilterIterator;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
@@ -28,6 +29,7 @@ use Throwable;
 class ComponentDiscoveryService implements ComponentScannerInterface
 {
     protected CacheManagerInterface $cache;
+    protected ModuleResolverInterface $moduleResolver;
     protected array $stats = [
         'scanned_modules' => 0,
         'scanned_files'   => 0,
@@ -37,9 +39,12 @@ class ComponentDiscoveryService implements ComponentScannerInterface
         'scan_time'       => 0,
     ];
 
-    public function __construct(CacheManagerInterface $cache = null)
-    {
-        $this->cache = $cache ?: app(CacheManagerInterface::class);
+    public function __construct(
+        CacheManagerInterface $cache = null,
+        ModuleResolverInterface $moduleResolver = null
+    ) {
+        $this->cache          = $cache ?: app(CacheManagerInterface::class);
+        $this->moduleResolver = $moduleResolver ?: app(ModuleResolverInterface::class);
     }
 
     /**
@@ -51,32 +56,88 @@ class ComponentDiscoveryService implements ComponentScannerInterface
     }
 
     /**
-     * Discover all Filament components in configured scan locations.
+     * Discover all Filament components in configured scan locations with optimizations.
      * Implementation of ComponentScannerInterface method.
      */
     public function discoverComponents(string $panelName): array
     {
-        $startTime = microtime(true);
         $cacheKey = "panel_components:{$panelName}";
 
-        // Try to get from cache first
+        // Fast path: try cache first with minimal overhead
         $cached = $this->cache->get($cacheKey);
-        if (null !== $cached) {
+        if (null !== $cached)
+        {
             return $cached;
         }
 
-        $components = [
-            'resources' => $this->discoverResources($panelName)->toArray(),
-            'pages'     => $this->discoverPages($panelName)->toArray(),
-            'widgets'   => $this->discoverWidgets($panelName)->toArray(),
-        ];
+        // Only measure time in development
+        $startTime = app()->hasDebugModeEnabled() ? microtime(true) : 0;
 
-        $this->stats['scan_time'] = microtime(true) - $startTime;
+        // Discover components efficiently
+        $components = $this->performOptimizedDiscovery($panelName);
 
-        // Store the results
+        // Update stats only in development
+        if (app()->hasDebugModeEnabled())
+        {
+            $this->stats['scan_time'] = microtime(true) - $startTime;
+        }
+
+        // Store the results with appropriate TTL
         $this->cache->put($cacheKey, $components);
 
         return $components;
+    }
+
+    /**
+     * Perform optimized component discovery.
+     */
+    protected function performOptimizedDiscovery(string $panelName): array
+    {
+        // Check if any component types are enabled before scanning
+        $enabledTypes = $this->getEnabledComponentTypes();
+
+        $components = [
+            'resources' => [],
+            'pages'     => [],
+            'widgets'   => [],
+        ];
+
+        // Only discover enabled types to avoid unnecessary work
+        if ($enabledTypes['resources'] ?? true)
+        {
+            $components['resources'] = $this->discoverResources($panelName)->toArray();
+        }
+
+        if ($enabledTypes['pages'] ?? true)
+        {
+            $components['pages'] = $this->discoverPages($panelName)->toArray();
+        }
+
+        if ($enabledTypes['widgets'] ?? true)
+        {
+            $components['widgets'] = $this->discoverWidgets($panelName)->toArray();
+        }
+
+        return $components;
+    }
+
+    /**
+     * Get enabled component types with caching.
+     */
+    protected function getEnabledComponentTypes(): array
+    {
+        static $enabledTypes = null;
+
+        if (null === $enabledTypes)
+        {
+            $enabledTypes = [
+                'resources' => $this->isComponentTypeEnabled('resources'),
+                'pages'     => $this->isComponentTypeEnabled('pages'),
+                'widgets'   => $this->isComponentTypeEnabled('widgets'),
+            ];
+        }
+
+        return $enabledTypes;
     }
 
     /**
@@ -84,7 +145,8 @@ class ComponentDiscoveryService implements ComponentScannerInterface
      */
     public function discoverComponentType(string $panelName, string $componentType): array
     {
-        return match ($componentType) {
+        return match ($componentType)
+        {
             'resources' => $this->discoverResources($panelName)->toArray(),
             'pages'     => $this->discoverPages($panelName)->toArray(),
             'widgets'   => $this->discoverWidgets($panelName)->toArray(),
@@ -145,16 +207,20 @@ class ComponentDiscoveryService implements ComponentScannerInterface
 
         $scanLocations = $this->getScanLocations($panelId);
 
-        foreach ($scanLocations as $location) {
-            foreach (['resources', 'pages', 'widgets'] as $type) {
-                if (!$this->isComponentTypeEnabled($type)) {
+        foreach ($scanLocations as $location)
+        {
+            foreach (['resources', 'pages', 'widgets'] as $type)
+            {
+                if (!$this->isComponentTypeEnabled($type))
+                {
                     continue;
                 }
 
                 $typePath = $this->resolveComponentPath($moduleName, $location, $type, $panelId);
 
-                if (File::isDirectory($typePath)) {
-                    $found = $this->scanDirectoryForComponents($typePath, $moduleName, $type);
+                if (File::isDirectory($typePath))
+                {
+                    $found             = $this->scanDirectoryForComponents($typePath, $moduleName, $type);
                     $components[$type] = $components[$type]->merge($found);
                 }
             }
@@ -168,30 +234,35 @@ class ComponentDiscoveryService implements ComponentScannerInterface
     }
 
     /**
-     * Check if a class is a valid Filament component.
+     * Check if a class is a valid Filament component - simplified without attributes.
      */
     public function isValidComponent(string $className, string $type): bool
     {
-        if (!class_exists($className)) {
+        if (!class_exists($className))
+        {
             return false;
         }
 
-        try {
+        try
+        {
             $reflection = new ReflectionClass($className);
 
-            if ($reflection->isAbstract() || $reflection->isInterface() || $reflection->isTrait()) {
+            if ($reflection->isAbstract() || $reflection->isInterface() || $reflection->isTrait())
+            {
                 return false;
             }
 
-            // More flexible validation - check if the class is compatible with the component type
-            return match ($type) {
+            // Simple inheritance-based validation without attribute checking
+            return match ($type)
+            {
                 'resources' => $this->isValidResourceComponent($reflection),
                 'pages'     => $this->isValidPageComponent($reflection),
                 'widgets'   => $this->isValidWidgetComponent($reflection),
                 default     => false,
             };
 
-        } catch (ReflectionException $e) {
+        } catch (ReflectionException $e)
+        {
             return false;
         }
     }
@@ -203,24 +274,29 @@ class ComponentDiscoveryService implements ComponentScannerInterface
     protected function isValidResourceComponent(ReflectionClass $reflection): bool
     {
         // First check if it's a subclass of Resource (the common case)
-        if ($reflection->isSubclassOf(Resource::class)) {
+        if ($reflection->isSubclassOf(Resource::class))
+        {
             return true;
         }
 
         // Check if strict inheritance is required
-        if (config('modulite.components.types.resources.strict_inheritance', false)) {
+        if (config('modulite.components.types.resources.strict_inheritance', false))
+        {
             return false;
         }
 
         // Check if custom base classes are allowed
-        if (!config('modulite.components.types.resources.allow_custom_base_classes', true)) {
+        if (!config('modulite.components.types.resources.allow_custom_base_classes', true))
+        {
             return false;
         }
 
         // Check for required resource methods (duck typing approach)
         $requiredMethods = ['getModel', 'form', 'table'];
-        foreach ($requiredMethods as $method) {
-            if (!$reflection->hasMethod($method)) {
+        foreach ($requiredMethods as $method)
+        {
+            if (!$reflection->hasMethod($method))
+            {
                 return false;
             }
         }
@@ -235,31 +311,37 @@ class ComponentDiscoveryService implements ComponentScannerInterface
     protected function isValidPageComponent(ReflectionClass $reflection): bool
     {
         // First check if it's a subclass of Page (the common case)
-        if ($reflection->isSubclassOf(Page::class)) {
+        if ($reflection->isSubclassOf(Page::class))
+        {
             return true;
         }
 
         // Check if strict inheritance is required
-        if (config('modulite.components.types.pages.strict_inheritance', false)) {
+        if (config('modulite.components.types.pages.strict_inheritance', false))
+        {
             return false;
         }
 
         // Check if custom base classes are allowed
-        if (!config('modulite.components.types.pages.allow_custom_base_classes', true)) {
+        if (!config('modulite.components.types.pages.allow_custom_base_classes', true))
+        {
             return false;
         }
 
         // Check for page characteristics (duck typing approach)
         // Pages typically implement Livewire Component interface
-        if ($reflection->implementsInterface(\Livewire\Component::class)) {
+        if ($reflection->implementsInterface(\Livewire\Component::class))
+        {
             return true;
         }
 
         // Check for common page methods
-        $pageMethods = ['render', 'mount'];
+        $pageMethods   = ['render', 'mount'];
         $hasPageMethod = false;
-        foreach ($pageMethods as $method) {
-            if ($reflection->hasMethod($method)) {
+        foreach ($pageMethods as $method)
+        {
+            if ($reflection->hasMethod($method))
+            {
                 $hasPageMethod = true;
                 break;
             }
@@ -275,31 +357,37 @@ class ComponentDiscoveryService implements ComponentScannerInterface
     protected function isValidWidgetComponent(ReflectionClass $reflection): bool
     {
         // First check if it's a subclass of Widget (the common case)
-        if ($reflection->isSubclassOf(Widget::class)) {
+        if ($reflection->isSubclassOf(Widget::class))
+        {
             return true;
         }
 
         // Check if strict inheritance is required
-        if (config('modulite.components.types.widgets.strict_inheritance', false)) {
+        if (config('modulite.components.types.widgets.strict_inheritance', false))
+        {
             return false;
         }
 
         // Check if custom base classes are allowed
-        if (!config('modulite.components.types.widgets.allow_custom_base_classes', true)) {
+        if (!config('modulite.components.types.widgets.allow_custom_base_classes', true))
+        {
             return false;
         }
 
         // Check for widget characteristics (duck typing approach)
         // Widgets typically implement Livewire Component interface
-        if ($reflection->implementsInterface(\Livewire\Component::class)) {
+        if ($reflection->implementsInterface(\Livewire\Component::class))
+        {
             return true;
         }
 
         // Check for common widget methods
-        $widgetMethods = ['render', 'getData'];
+        $widgetMethods   = ['render', 'getData'];
         $hasWidgetMethod = false;
-        foreach ($widgetMethods as $method) {
-            if ($reflection->hasMethod($method)) {
+        foreach ($widgetMethods as $method)
+        {
+            if ($reflection->hasMethod($method))
+            {
                 $hasWidgetMethod = true;
                 break;
             }
@@ -328,23 +416,26 @@ class ComponentDiscoveryService implements ComponentScannerInterface
 
         // Check cache first
         $cached = $this->cache->get($cacheKey);
-        if (null !== $cached) {
+        if (null !== $cached)
+        {
             return collect($cached);
         }
 
         // Compute the value
-        if (!$this->isComponentTypeEnabled($type)) {
+        if (!$this->isComponentTypeEnabled($type))
+        {
             return collect();
         }
 
-        $components = collect();
+        $components     = collect();
         $enabledModules = $this->getEnabledModules();
 
         $this->stats['scanned_modules'] = $enabledModules->count();
 
-        foreach ($enabledModules as $moduleName) {
+        foreach ($enabledModules as $moduleName)
+        {
             $moduleComponents = $this->discoverComponentsFromModule($moduleName, $panelId);
-            $components = $components->merge($moduleComponents[$type]);
+            $components       = $components->merge($moduleComponents[$type]);
         }
 
         $this->stats["found_{$type}"] = $components->count();
@@ -363,10 +454,12 @@ class ComponentDiscoveryService implements ComponentScannerInterface
     protected function scanDirectoryForComponents(string $path, string $moduleName, string $type): Collection
     {
         $components = collect();
-        $iterator = $this->createDirectoryIterator($path);
+        $iterator   = $this->createDirectoryIterator($path);
 
-        foreach ($iterator as $file) {
-            if (!$file->isFile() || 'php' !== $file->getExtension()) {
+        foreach ($iterator as $file)
+        {
+            if (!$file->isFile() || 'php' !== $file->getExtension())
+            {
                 continue;
             }
 
@@ -374,7 +467,8 @@ class ComponentDiscoveryService implements ComponentScannerInterface
 
             $className = $this->extractClassNameFromFile($file->getPathname(), $moduleName);
 
-            if ($className && $this->isValidComponent($className, $type)) {
+            if ($className && $this->isValidComponent($className, $type))
+            {
                 $components->push($className);
             }
         }
@@ -394,13 +488,15 @@ class ComponentDiscoveryService implements ComponentScannerInterface
 
         $filterIterator = new RecursiveCallbackFilterIterator(
             $directoryIterator,
-            function ($current, $key, $iterator) {
+            function ($current, $key, $iterator)
+            {
                 // Skip excluded directories
                 $excludedDirs = config('modulite.components.scanning.excluded_directories', [
                     'tests', 'migrations', 'seeders', 'factories', '.git', 'node_modules', 'vendor'
                 ]);
 
-                if ($current->isDir()) {
+                if ($current->isDir())
+                {
                     $dirName = $current->getFilename();
                     return !in_array($dirName, $excludedDirs);
                 }
@@ -423,12 +519,14 @@ class ComponentDiscoveryService implements ComponentScannerInterface
      */
     protected function extractClassNameFromFile(string $filePath, string $moduleName): ?string
     {
-        try {
+        try
+        {
             $content = File::get($filePath);
 
             // Extract namespace
             $namespacePattern = '/namespace\s+([^;]+);/';
-            if (!preg_match($namespacePattern, $content, $namespaceMatches)) {
+            if (!preg_match($namespacePattern, $content, $namespaceMatches))
+            {
                 return null;
             }
 
@@ -436,7 +534,8 @@ class ComponentDiscoveryService implements ComponentScannerInterface
 
             // Extract class name
             $classPattern = '/class\s+(\w+)(?:\s+extends\s+[\w\\\\]+)?(?:\s+implements\s+[\w,\s\\\\]+)?\s*{/';
-            if (!preg_match($classPattern, $content, $classMatches)) {
+            if (!preg_match($classPattern, $content, $classMatches))
+            {
                 return null;
             }
 
@@ -444,7 +543,8 @@ class ComponentDiscoveryService implements ComponentScannerInterface
 
             return $namespace.'\\'.$className;
 
-        } catch (Throwable $e) {
+        } catch (Throwable $e)
+        {
             return null;
         }
     }
@@ -464,9 +564,11 @@ class ComponentDiscoveryService implements ComponentScannerInterface
         ]);
 
         // Replace {panel} placeholder with actual panel ID
-        if ($panelId) {
+        if ($panelId)
+        {
             $locations = array_map(fn ($location) => str_replace('{panel}', Str::studly($panelId), $location), $locations);
-        } else {
+        } else
+        {
             // For global discovery, we might want to scan all panels or use a default
             $locations = array_map(fn ($location) => str_replace('{panel}', '*', $location), $locations);
         }
@@ -481,12 +583,14 @@ class ComponentDiscoveryService implements ComponentScannerInterface
     {
         $resolved = str_replace('*', $moduleName, $locationPattern);
 
-        if ($panelId && str_contains($resolved, '{panel}')) {
+        if ($panelId && str_contains($resolved, '{panel}'))
+        {
             $resolved = str_replace('{panel}', Str::studly($panelId), $resolved);
         }
 
         // If location pattern doesn't include the component type, append it
-        if (!str_ends_with(mb_strtolower($resolved), mb_strtolower($type))) {
+        if (!str_ends_with(mb_strtolower($resolved), mb_strtolower($type)))
+        {
             $resolved = mb_rtrim($resolved, '/').'/'.Str::studly($type);
         }
 
@@ -502,43 +606,21 @@ class ComponentDiscoveryService implements ComponentScannerInterface
     }
 
     /**
-     * Get enabled modules.
+     * Get enabled modules using the configured module resolver.
      */
     protected function getEnabledModules(): Collection
     {
-        // Reuse logic from PanelScannerService or inject it as dependency
         $cacheKey = 'enabled_modules';
 
         // Check cache first
         $cached = $this->cache->get($cacheKey);
-        if (null !== $cached) {
+        if (null !== $cached)
+        {
             return collect($cached);
         }
 
-        // Compute the value
-        $modules = collect();
-
-        // Check if nwidart/laravel-modules is available
-        if (class_exists(\Nwidart\Modules\Facades\Module::class)) {
-            $enabledModules = \Nwidart\Modules\Facades\Module::allEnabled();
-
-            foreach ($enabledModules as $module) {
-                $modules->push($module->getName());
-            }
-        } else {
-            // Fallback: scan modules_statuses.json
-            $statusFile = base_path('modules_statuses.json');
-
-            if (File::exists($statusFile)) {
-                $statuses = json_decode(File::get($statusFile), true);
-
-                foreach ($statuses as $moduleName => $enabled) {
-                    if ($enabled) {
-                        $modules->push($moduleName);
-                    }
-                }
-            }
-        }
+        // Get modules from the resolver
+        $modules = $this->moduleResolver->getEnabledModules();
 
         // Store the result
         $this->cache->put($cacheKey, $modules->toArray());

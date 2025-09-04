@@ -8,25 +8,23 @@ namespace PanicDevs\Modulite\Contracts;
  * Interface for Modulite panel discovery services.
  *
  * This interface defines the contract for scanning and discovering
- * classes marked with the #[FilamentPanel] attribute across the application.
+ * Filament Panel Provider classes through directory structure and naming conventions.
  *
  * @package PanicDevs\Modulite\Contracts
  */
 interface PanelScannerInterface
 {
     /**
-     * Discover all Filament Panel classes in configured scan locations.
+     * Discover all Filament Panel Provider classes in configured scan locations.
      *
      * This method should:
      * - Scan all configured locations for PHP files
      * - Parse files to extract class names
-     * - Use reflection to check for #[FilamentPanel] attribute
+     * - Use inheritance checking to identify panel providers
      * - Return fully qualified class names of discovered panels
      * - Handle errors gracefully based on configuration
      *
-     * @return array<string> Array of fully qualified class names with #[FilamentPanel] attribute
-     *
-     * @throws \PanicDevs\Modulite\Exceptions\ScanException When scanning fails critically
+     * @return array<string> Array of fully qualified panel provider class names
      */
     public function discoverPanels(): array;
 
@@ -36,7 +34,7 @@ interface PanelScannerInterface
      * Returns metrics useful for debugging and performance monitoring:
      * - files_scanned: Number of PHP files examined
      * - classes_found: Total classes discovered in scanned files
-     * - panels_discovered: Classes with #[FilamentPanel] attribute
+     * - panels_discovered: Classes identified as panel providers
      * - scan_time: Time taken for the scan in seconds
      * - errors: Number of errors encountered during scan
      *

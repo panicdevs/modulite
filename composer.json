@@ -45,8 +45,7 @@
     ],
     "require": {
         "php": ">=8.2",
-        "filament/filament": "^4.0",
-        "nwidart/laravel-modules": "^11.0|^12.0"
+        "filament/filament": "^4.0"
     },
     "autoload": {
         "psr-4": {

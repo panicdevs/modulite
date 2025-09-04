@@ -28,11 +28,13 @@ class ModuliteStatusCommand extends Command
         $this->line('===================');
 
         // Handle options
-        if ($this->option('clear-cache')) {
+        if ($this->option('clear-cache'))
+        {
             $this->clearCache($cache);
         }
 
-        if ($this->option('scan')) {
+        if ($this->option('scan'))
+        {
             $this->forceScan($panelScanner, $componentScanner);
         }
 
@@ -43,7 +45,8 @@ class ModuliteStatusCommand extends Command
         $this->displayComponentStatus($componentScanner);
         $this->displayCacheStatus($cache);
 
-        if ($this->option('vvv')) {
+        if ($this->option('vvv'))
+        {
             $this->displayDetailedStats($panelScanner, $componentScanner, $cache);
         }
 
@@ -69,10 +72,10 @@ class ModuliteStatusCommand extends Command
 
         $startTime = microtime(true);
 
-        $panels = $panelScanner->discoverPanels();
+        $panels    = $panelScanner->discoverPanels();
         $resources = $componentScanner->discoverComponentType('manager', 'resources');
-        $pages = $componentScanner->discoverComponentType('manager', 'pages');
-        $widgets = $componentScanner->discoverComponentType('manager', 'widgets');
+        $pages     = $componentScanner->discoverComponentType('manager', 'pages');
+        $widgets   = $componentScanner->discoverComponentType('manager', 'widgets');
 
         $duration = round((microtime(true) - $startTime) * 1000, 2);
 
@@ -105,18 +108,23 @@ class ModuliteStatusCommand extends Command
         // Get enabled modules using nwidart modules if available
         $enabledModules = collect();
 
-        if (class_exists(\Nwidart\Modules\Facades\Module::class)) {
+        if (class_exists(\Nwidart\Modules\Facades\Module::class))
+        {
             $enabledModulesArray = \Nwidart\Modules\Facades\Module::allEnabled();
-            foreach ($enabledModulesArray as $module) {
+            foreach ($enabledModulesArray as $module)
+            {
                 $enabledModules->push($module->getName());
             }
         }
 
-        if ($enabledModules->isEmpty()) {
+        if ($enabledModules->isEmpty())
+        {
             $this->warn('No enabled modules found');
-        } else {
+        } else
+        {
             $this->info("Found {$enabledModules->count()} enabled modules:");
-            foreach ($enabledModules as $module) {
+            foreach ($enabledModules as $module)
+            {
                 $this->line("  • {$module}");
             }
         }
@@ -130,11 +138,14 @@ class ModuliteStatusCommand extends Command
 
         $panels = $panelScanner->discoverPanels();
 
-        if (empty($panels)) {
+        if (empty($panels))
+        {
             $this->warn('No panels discovered');
-        } else {
+        } else
+        {
             $this->info("Discovered ".count($panels)." panels:");
-            foreach ($panels as $panel) {
+            foreach ($panels as $panel)
+            {
                 $this->line("  • {$panel}");
             }
         }
@@ -147,8 +158,8 @@ class ModuliteStatusCommand extends Command
         $this->info('Component Discovery:');
 
         $resources = $componentScanner->discoverComponentType('manager', 'resources');
-        $pages = $componentScanner->discoverComponentType('manager', 'pages');
-        $widgets = $componentScanner->discoverComponentType('manager', 'widgets');
+        $pages     = $componentScanner->discoverComponentType('manager', 'pages');
+        $widgets   = $componentScanner->discoverComponentType('manager', 'widgets');
 
         $this->table(['Type', 'Count'], [
             ['Resources', count($resources)],
@@ -186,7 +197,7 @@ class ModuliteStatusCommand extends Command
     ): void {
         $this->info('Detailed Statistics:');
 
-        $panelStats = $panelScanner->getScanStats();
+        $panelStats     = $panelScanner->getScanStats();
         $componentStats = $componentScanner->getScanStats();
 
         $this->info('Panel Scanner:');

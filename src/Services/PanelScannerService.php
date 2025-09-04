@@ -6,9 +6,7 @@ namespace PanicDevs\Modulite\Services;
 
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
-use PanicDevs\Modulite\Attributes\FilamentPanel;
 use PanicDevs\Modulite\Contracts\PanelScannerInterface;
-use PanicDevs\Modulite\Exceptions\ScanException;
 use ReflectionClass;
 use RecursiveCallbackFilterIterator;
 use RecursiveDirectoryIterator;
@@ -23,7 +21,7 @@ use Throwable;
  * This service is responsible for:
  * - Scanning configured paths for PHP files
  * - Extracting class names using token parsing
- * - Filtering classes with #[FilamentPanel] attribute
+ * - Filtering panel provider classes by naming conventions and inheritance
  * - Performance optimization with depth limits and exclusions
  * - Comprehensive error handling and logging
  *
@@ -77,31 +75,31 @@ class PanelScannerService implements PanelScannerInterface
      */
     public function __construct(array $config, string $basePath, mixed $moduleManager = null)
     {
-        $this->config = $config;
-        $this->basePath = mb_rtrim($basePath, '/');
+        $this->config        = $config;
+        $this->basePath      = mb_rtrim($basePath, '/');
         $this->moduleManager = $moduleManager;
     }
 
     /**
      * Discover all Filament Panel classes in configured locations.
      *
-     * @return array<string> Array of fully qualified class names with #[FilamentPanel] attribute
-     *
-     * @throws ScanException When scanning fails critically
+     * @return array<string> Array of fully qualified panel provider class names
      */
     public function discoverPanels(): array
     {
         $startTime = microtime(true);
         $this->resetScanStats();
 
-        try {
+        try
+        {
             $this->logScanStart();
 
-            $panelClasses = [];
+            $panelClasses  = [];
             $scanLocations = $this->resolveScanLocations();
 
-            foreach ($scanLocations as $location) {
-                $discovered = $this->scanLocation($location);
+            foreach ($scanLocations as $location)
+            {
+                $discovered   = $this->scanLocation($location);
                 $panelClasses = array_merge($panelClasses, $discovered);
             }
 
@@ -109,17 +107,19 @@ class PanelScannerService implements PanelScannerInterface
             $panelClasses = array_values(array_unique($panelClasses));
 
             $this->scanStats['panels_discovered'] = count($panelClasses);
-            $this->scanStats['scan_time'] = microtime(true) - $startTime;
+            $this->scanStats['scan_time']         = microtime(true) - $startTime;
 
             $this->logScanComplete($panelClasses);
 
             return $panelClasses;
 
-        } catch (Throwable $e) {
+        } catch (Throwable $e)
+        {
             $this->scanStats['scan_time'] = microtime(true) - $startTime;
             $this->logScanError($e);
 
-            if ($this->shouldFailSilently()) {
+            if ($this->shouldFailSilently())
+            {
                 return [];
             }
 
@@ -135,26 +135,31 @@ class PanelScannerService implements PanelScannerInterface
      */
     protected function scanLocation(string $location): array
     {
-        if (!is_dir($location)) {
+        if (!is_dir($location))
+        {
             $this->logLocationSkipped($location, 'Directory does not exist');
             return [];
         }
 
         $panelClasses = [];
 
-        try {
+        try
+        {
             $files = $this->getPhpFilesInLocation($location);
 
-            foreach ($files as $file) {
-                $discovered = $this->scanFile($file);
+            foreach ($files as $file)
+            {
+                $discovered   = $this->scanFile($file);
                 $panelClasses = array_merge($panelClasses, $discovered);
             }
 
-        } catch (Throwable $e) {
+        } catch (Throwable $e)
+        {
             $this->logLocationError($location, $e);
             $this->scanStats['errors']++;
 
-            if (!$this->shouldFailSilently()) {
+            if (!$this->shouldFailSilently())
+            {
                 throw new ScanException("Failed to scan location {$location}: {$e->getMessage()}", 0, $e);
             }
         }
@@ -172,29 +177,35 @@ class PanelScannerService implements PanelScannerInterface
     {
         $this->scanStats['files_scanned']++;
 
-        try {
+        try
+        {
             $classes = $this->extractClassesFromFile($filePath);
             $this->scanStats['classes_found'] += count($classes);
 
             $panelClasses = [];
 
-            foreach ($classes as $className) {
-                if ($this->isPanelClass($className)) {
+            foreach ($classes as $className)
+            {
+                if ($this->isPanelClass($className))
+                {
                     $panelClasses[] = $className;
                 }
             }
 
-            if (!empty($panelClasses)) {
+            if (!empty($panelClasses))
+            {
                 $this->logPanelsFound($filePath, $panelClasses);
             }
 
             return $panelClasses;
 
-        } catch (Throwable $e) {
+        } catch (Throwable $e)
+        {
             $this->logFileError($filePath, $e);
             $this->scanStats['errors']++;
 
-            if (!$this->shouldFailSilently()) {
+            if (!$this->shouldFailSilently())
+            {
                 throw new ScanException("Failed to scan file {$filePath}: {$e->getMessage()}", 0, $e);
             }
 
@@ -211,18 +222,20 @@ class PanelScannerService implements PanelScannerInterface
     protected function extractClassesFromFile(string $filePath): array
     {
         // Use cache if available for current scan
-        if (isset($this->discoveredClasses[$filePath])) {
+        if (isset($this->discoveredClasses[$filePath]))
+        {
             return $this->discoveredClasses[$filePath];
         }
 
-        $code = File::get($filePath);
+        $code   = File::get($filePath);
         $tokens = token_get_all($code);
 
-        if (!is_array($tokens)) {
+        if (!is_array($tokens))
+        {
             return [];
         }
 
-        $classes = $this->parseClassesFromTokens($tokens);
+        $classes                            = $this->parseClassesFromTokens($tokens);
         $this->discoveredClasses[$filePath] = $classes;
 
         return $classes;
@@ -242,28 +255,33 @@ class PanelScannerService implements PanelScannerInterface
      */
     protected function parseClassesFromTokens(array $tokens): array
     {
-        $namespace = '';
-        $collectNs = false;
-        $currentNs = [];
-        $classes = [];
+        $namespace    = '';
+        $collectNs    = false;
+        $currentNs    = [];
+        $classes      = [];
         $collectClass = false;
-        $classTypes = [T_CLASS, T_INTERFACE, T_TRAIT];
+        $classTypes   = [T_CLASS, T_INTERFACE, T_TRAIT];
 
-        for ($i = 0, $c = count($tokens); $i < $c; $i++) {
+        for ($i = 0, $c = count($tokens); $i < $c; $i++)
+        {
             $token = $tokens[$i];
 
             // Handle namespace declaration
-            if (is_array($token) && T_NAMESPACE === $token[0]) {
+            if (is_array($token) && T_NAMESPACE === $token[0])
+            {
                 $currentNs = [];
                 $collectNs = true;
                 continue;
             }
 
             // Collect namespace parts
-            if ($collectNs) {
-                if (is_array($token) && in_array($token[0], [T_STRING, T_NAME_QUALIFIED, T_NS_SEPARATOR], true)) {
+            if ($collectNs)
+            {
+                if (is_array($token) && in_array($token[0], [T_STRING, T_NAME_QUALIFIED, T_NS_SEPARATOR], true))
+                {
                     $currentNs[] = $token[1];
-                } elseif (';' === $token || '{' === $token) {
+                } elseif (';' === $token || '{' === $token)
+                {
                     $namespace = mb_trim(implode('', $currentNs));
                     $collectNs = false;
                 }
@@ -271,9 +289,11 @@ class PanelScannerService implements PanelScannerInterface
             }
 
             // Handle class/interface/trait declaration
-            if (is_array($token) && in_array($token[0], $classTypes, true)) {
+            if (is_array($token) && in_array($token[0], $classTypes, true))
+            {
                 // Check if this is an anonymous class
-                if ($this->isAnonymousClass($tokens, $i)) {
+                if ($this->isAnonymousClass($tokens, $i))
+                {
                     continue;
                 }
 
@@ -282,10 +302,11 @@ class PanelScannerService implements PanelScannerInterface
             }
 
             // Collect class name
-            if ($collectClass && is_array($token) && T_STRING === $token[0]) {
-                $className = $token[1];
-                $fqcn = $this->buildFullyQualifiedClassName($namespace, $className);
-                $classes[] = $fqcn;
+            if ($collectClass && is_array($token) && T_STRING === $token[0])
+            {
+                $className    = $token[1];
+                $fqcn         = $this->buildFullyQualifiedClassName($namespace, $className);
+                $classes[]    = $fqcn;
                 $collectClass = false;
             }
         }
@@ -302,14 +323,17 @@ class PanelScannerService implements PanelScannerInterface
     protected function isAnonymousClass(array $tokens, int $currentIndex): bool
     {
         // Look backwards for "new" keyword
-        for ($i = $currentIndex - 1; $i >= 0; $i--) {
+        for ($i = $currentIndex - 1; $i >= 0; $i--)
+        {
             $token = $tokens[$i];
 
-            if (is_array($token) && in_array($token[0], [T_WHITESPACE, T_FINAL, T_ABSTRACT], true)) {
+            if (is_array($token) && in_array($token[0], [T_WHITESPACE, T_FINAL, T_ABSTRACT], true))
+            {
                 continue;
             }
 
-            if (is_array($token) && T_NEW === $token[0]) {
+            if (is_array($token) && T_NEW === $token[0])
+            {
                 return true;
             }
 
@@ -324,7 +348,8 @@ class PanelScannerService implements PanelScannerInterface
      */
     protected function buildFullyQualifiedClassName(string $namespace, string $className): string
     {
-        if (empty($namespace)) {
+        if (empty($namespace))
+        {
             return $className;
         }
 
@@ -332,31 +357,57 @@ class PanelScannerService implements PanelScannerInterface
     }
 
     /**
-     * Check if a class is a panel class (has #[FilamentPanel] attribute).
+     * Check if a class is a panel provider class using naming conventions and inheritance.
      */
     protected function isPanelClass(string $className): bool
     {
-        try {
+        try
+        {
             // Check if class exists (avoid autoload failures)
-            if (!class_exists($className)) {
+            if (!class_exists($className))
+            {
                 return false;
             }
 
             $reflection = new ReflectionClass($className);
 
             // Only instantiable classes can be panel providers
-            if (!$reflection->isInstantiable()) {
+            if (!$reflection->isInstantiable())
+            {
                 return false;
             }
 
-            // Check for FilamentPanel attribute
-            $attributes = $reflection->getAttributes(FilamentPanel::class);
+            // Check naming convention: must contain "Panel" and end with "Provider"
+            $classBaseName = $reflection->getShortName();
+            if (!str_contains($classBaseName, 'Panel') || !str_ends_with($classBaseName, 'Provider'))
+            {
+                return false;
+            }
 
-            return !empty($attributes);
+            // Check if it extends PanelProvider (if available)
+            $parentClass = $reflection->getParentClass();
+            if ($parentClass && str_contains($parentClass->getName(), 'PanelProvider'))
+            {
+                return true;
+            }
 
-        } catch (Throwable $e) {
+            // Check if it has panel-related methods (duck typing)
+            $panelMethods = ['panel', 'configure', 'boot'];
+            foreach ($panelMethods as $method)
+            {
+                if ($reflection->hasMethod($method))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+
+        } catch (Throwable $e)
+        {
             // Log reflection errors if configured
-            if ($this->config['error_handling']['log_reflection_errors'] ?? true) {
+            if ($this->config['error_handling']['log_reflection_errors'] ?? true)
+            {
                 $this->logReflectionError($className, $e);
             }
 
@@ -371,11 +422,12 @@ class PanelScannerService implements PanelScannerInterface
      */
     protected function resolveScanLocations(): array
     {
-        $locations = $this->config['panels']['locations'] ?? [];
+        $locations         = $this->config['panels']['locations'] ?? [];
         $resolvedLocations = [];
 
-        foreach ($locations as $pattern) {
-            $resolved = $this->resolveLocationPattern($pattern);
+        foreach ($locations as $pattern)
+        {
+            $resolved          = $this->resolveLocationPattern($pattern);
             $resolvedLocations = array_merge($resolvedLocations, $resolved);
         }
 
@@ -394,12 +446,14 @@ class PanelScannerService implements PanelScannerInterface
     protected function resolveLocationPattern(string $pattern): array
     {
         // Convert relative pattern to absolute
-        if (!str_starts_with($pattern, '/')) {
+        if (!str_starts_with($pattern, '/'))
+        {
             $pattern = $this->basePath.'/'.mb_ltrim($pattern, '/');
         }
 
         // Handle wildcard patterns
-        if (str_contains($pattern, '*')) {
+        if (str_contains($pattern, '*'))
+        {
             return $this->expandWildcardPattern($pattern);
         }
 
@@ -416,13 +470,16 @@ class PanelScannerService implements PanelScannerInterface
     {
         $paths = [];
 
-        try {
+        try
+        {
             $globPaths = glob($pattern, GLOB_ONLYDIR);
 
-            if (false !== $globPaths) {
+            if (false !== $globPaths)
+            {
                 $paths = $globPaths;
             }
-        } catch (Throwable $e) {
+        } catch (Throwable $e)
+        {
             $this->logPatternError($pattern, $e);
         }
 
@@ -436,24 +493,28 @@ class PanelScannerService implements PanelScannerInterface
      */
     protected function getPhpFilesInLocation(string $location): Generator
     {
-        $maxDepth = $this->config['panels']['scanning']['max_depth'] ?? 5;
-        $excludedDirs = $this->config['panels']['scanning']['excluded_directories'] ?? [];
+        $maxDepth       = $this->config['panels']['scanning']['max_depth'] ?? 5;
+        $excludedDirs   = $this->config['panels']['scanning']['excluded_directories'] ?? [];
         $followSymlinks = $this->config['panels']['scanning']['follow_symlinks'] ?? false;
 
         $flags = RecursiveDirectoryIterator::SKIP_DOTS;
-        if ($followSymlinks) {
+        if ($followSymlinks)
+        {
             $flags |= RecursiveDirectoryIterator::FOLLOW_SYMLINKS;
         }
 
         $iterator = new RecursiveIteratorIterator(
             new RecursiveCallbackFilterIterator(
                 new RecursiveDirectoryIterator($location, $flags),
-                function (SplFileInfo $file) use ($excludedDirs) {
-                    if ($file->isDir()) {
+                function (SplFileInfo $file) use ($excludedDirs)
+                {
+                    if ($file->isDir())
+                    {
                         $name = $file->getFilename();
 
                         // Skip excluded directories
-                        if (in_array($name, $excludedDirs, true) || str_starts_with($name, '.')) {
+                        if (in_array($name, $excludedDirs, true) || str_starts_with($name, '.'))
+                        {
                             return false;
                         }
                     }
@@ -464,13 +525,16 @@ class PanelScannerService implements PanelScannerInterface
             RecursiveIteratorIterator::LEAVES_ONLY
         );
 
-        if ($maxDepth > 0) {
+        if ($maxDepth > 0)
+        {
             $iterator->setMaxDepth($maxDepth);
         }
 
-        foreach ($iterator as $file) {
+        foreach ($iterator as $file)
+        {
             /** @var SplFileInfo $file */
-            if ($file->isFile() && 'php' === $file->getExtension()) {
+            if ($file->isFile() && 'php' === $file->getExtension())
+            {
                 yield $file->getPathname();
             }
         }
@@ -514,7 +578,8 @@ class PanelScannerService implements PanelScannerInterface
 
     protected function logScanStart(): void
     {
-        if ($this->shouldLog()) {
+        if ($this->shouldLog())
+        {
             Log::channel($this->getLogChannel())->info('Modulite panel discovery started');
         }
     }
@@ -524,7 +589,8 @@ class PanelScannerService implements PanelScannerInterface
      */
     protected function logScanComplete(array $panels): void
     {
-        if ($this->shouldLog()) {
+        if ($this->shouldLog())
+        {
             $stats = $this->scanStats;
             Log::channel($this->getLogChannel())->info('Modulite panel discovery completed', [
                 'panels_found'  => count($panels),
@@ -538,7 +604,8 @@ class PanelScannerService implements PanelScannerInterface
 
     protected function logScanError(Throwable $e): void
     {
-        if ($this->shouldLog()) {
+        if ($this->shouldLog())
+        {
             Log::channel($this->getLogChannel())->error('Modulite panel discovery failed', [
                 'error'      => $e->getMessage(),
                 'scan_stats' => $this->scanStats,
@@ -548,14 +615,16 @@ class PanelScannerService implements PanelScannerInterface
 
     protected function logLocationSkipped(string $location, string $reason): void
     {
-        if ($this->shouldLog()) {
+        if ($this->shouldLog())
+        {
             Log::channel($this->getLogChannel())->debug("Skipping location: {$location}", ['reason' => $reason]);
         }
     }
 
     protected function logLocationError(string $location, Throwable $e): void
     {
-        if ($this->shouldLog()) {
+        if ($this->shouldLog())
+        {
             Log::channel($this->getLogChannel())->warning("Error scanning location: {$location}", [
                 'error' => $e->getMessage(),
             ]);
@@ -564,7 +633,8 @@ class PanelScannerService implements PanelScannerInterface
 
     protected function logFileError(string $filePath, Throwable $e): void
     {
-        if ($this->shouldLog()) {
+        if ($this->shouldLog())
+        {
             Log::channel($this->getLogChannel())->warning("Error scanning file: {$filePath}", [
                 'error' => $e->getMessage(),
             ]);
@@ -576,7 +646,8 @@ class PanelScannerService implements PanelScannerInterface
      */
     protected function logPanelsFound(string $filePath, array $panels): void
     {
-        if ($this->shouldLog()) {
+        if ($this->shouldLog())
+        {
             Log::channel($this->getLogChannel())->debug("Found panels in {$filePath}", [
                 'panels' => $panels,
             ]);
@@ -585,7 +656,8 @@ class PanelScannerService implements PanelScannerInterface
 
     protected function logReflectionError(string $className, Throwable $e): void
     {
-        if ($this->shouldLog()) {
+        if ($this->shouldLog())
+        {
             Log::channel($this->getLogChannel())->debug("Reflection error for class: {$className}", [
                 'error' => $e->getMessage(),
             ]);
@@ -594,7 +666,8 @@ class PanelScannerService implements PanelScannerInterface
 
     protected function logPatternError(string $pattern, Throwable $e): void
     {
-        if ($this->shouldLog()) {
+        if ($this->shouldLog())
+        {
             Log::channel($this->getLogChannel())->warning("Error expanding pattern: {$pattern}", [
                 'error' => $e->getMessage(),
             ]);

@@ -5,9 +5,7 @@ declare(strict_types=1);
 namespace PanicDevs\Modulite\Console\Commands;
 
 use Illuminate\Console\Command;
-use PanicDevs\Modulite\Services\SimpleFileStorage;
-use PanicDevs\Modulite\Contracts\PanelScannerInterface;
-use PanicDevs\Modulite\Contracts\ComponentDiscoveryInterface;
+use PanicDevs\Modulite\Contracts\CacheManagerInterface;
 use Throwable;
 
 /**
@@ -15,38 +13,37 @@ use Throwable;
  */
 class ModuliteClearCacheCommand extends Command
 {
-    protected $signature = 'modulite:clear-cache';
+    protected $signature = 'modulite:clear 
+                          {--force : Force clear without confirmation}';
 
-    protected $description = 'Clear all Modulite storage (panels, components, and discovery data)';
+    protected $description = 'Clear all Modulite caches';
 
-    public function handle(
-        SimpleFileStorage $storage,
-        PanelScannerInterface $panelScanner,
-        ComponentDiscoveryInterface $componentDiscovery
-    ): int {
-        $this->info('Clearing Modulite storage...');
+    public function handle(CacheManagerInterface $cacheManager): int
+    {
+        if (!$this->option('force') && !$this->confirm('Are you sure you want to clear all Modulite caches?'))
+        {
+            $this->info('Cache clear cancelled.');
+            return self::SUCCESS;
+        }
 
-        try {
-            // Clear main storage
-            $storage->clear();
-            $this->line('✓ Main storage cleared');
+        $this->info('Clearing Modulite caches...');
 
-            // Clear panel scanner cache
-            $panelScanner->refreshCache();
-            $this->line('✓ Panel discovery cache cleared');
+        try
+        {
+            // Clear all caches
+            $cacheManager->flush();
+            $this->line('✓ All caches cleared');
 
-            // Clear component discovery cache
-            $componentDiscovery->refreshCache();
-            $this->line('✓ Component discovery cache cleared');
-
-            $this->info('All Modulite storage cleared successfully!');
+            $this->info('Modulite cache cleared successfully!');
 
             return self::SUCCESS;
 
-        } catch (Throwable $e) {
-            $this->error("Failed to clear storage: {$e->getMessage()}");
+        } catch (Throwable $e)
+        {
+            $this->error("Failed to clear cache: {$e->getMessage()}");
 
-            if ($this->getOutput()->isVerbose()) {
+            if ($this->getOutput()->isVerbose())
+            {
                 $this->error($e->getTraceAsString());
             }
 

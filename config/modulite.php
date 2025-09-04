@@ -188,9 +188,23 @@ return [
         */
         'registration' => [
             'auto_register'            => env('MODULITE_AUTO_REGISTER_COMPONENTS', true),
-            'sort_by'                  => 'name', // 'name', 'priority', 'none'
-            'validate_before_register' => app()->hasDebugModeEnabled(),
+            'sort_by'                  => env('MODULITE_SORT_COMPONENTS', 'none'), // 'name', 'priority', 'none'
+            'validate_before_register' => env('MODULITE_VALIDATE_COMPONENTS', app()->hasDebugModeEnabled()),
             'group_by_module'          => true,
+        ],
+
+        /*
+        |--------------------------------------------------------------------------
+        | Component Discovery Performance
+        |--------------------------------------------------------------------------
+        |
+        | Performance settings for component discovery process.
+        |
+        */
+        'discovery' => [
+            'cache_discovery_stats' => env('MODULITE_CACHE_DISCOVERY_STATS', false),
+            'skip_disabled_modules' => env('MODULITE_SKIP_DISABLED_MODULES', true),
+            'batch_component_scans' => env('MODULITE_BATCH_COMPONENT_SCANS', true),
         ],
 
         /*
@@ -286,6 +300,22 @@ return [
             'enabled'   => true,
             'max_items' => 1000,
         ],
+
+        /*
+        |--------------------------------------------------------------------------
+        | Performance Optimizations
+        |--------------------------------------------------------------------------
+        |
+        | Additional performance optimizations for production environments.
+        | These settings are automatically optimized for production vs development.
+        |
+        */
+        'optimizations' => [
+            'static_caching'        => env('MODULITE_STATIC_CACHING', true),
+            'defer_validation'      => env('MODULITE_DEFER_VALIDATION', !app()->hasDebugModeEnabled()),
+            'skip_duplicate_panels' => env('MODULITE_SKIP_DUPLICATE_PANELS', true),
+            'disable_reflection'    => env('MODULITE_DISABLE_REFLECTION', app()->isProduction()),
+        ],
     ],
 
     /*
@@ -348,10 +378,24 @@ return [
     | Module Integration
     |--------------------------------------------------------------------------
     |
-    | Configure integration with nwidart/laravel-modules package.
+    | Configure integration with different module management packages.
     |
     */
     'modules' => [
+        /*
+        |--------------------------------------------------------------------------
+        | Module System Approach
+        |--------------------------------------------------------------------------
+        |
+        | Specify which module management system you're using:
+        | - 'nwidart': Use nwidart/laravel-modules package
+        | - 'panicdevs': Use panicdevs/modules package
+        |
+        | This determines how Modulite discovers and interacts with your modules.
+        |
+        */
+        'approach' => env('MODULITE_APPROACH', 'panicdevs'),
+
         /*
         |--------------------------------------------------------------------------
         | Module System Integration

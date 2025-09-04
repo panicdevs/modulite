@@ -21,6 +21,7 @@ class UnifiedCacheManager implements CacheManagerInterface
     protected bool $loaded = false;
     protected bool $enabled;
     protected int $ttl;
+    protected bool $needsDelayedSave = false;
 
     /**
      * Static cache for production to avoid repeated file includes
@@ -30,38 +31,51 @@ class UnifiedCacheManager implements CacheManagerInterface
     public function __construct(array $config = [])
     {
         $this->cacheFile = $config['file'] ?? base_path('bootstrap/cache/modulite.php');
-        $this->enabled = $config['enabled'] ?? true;
-        $this->ttl = $config['ttl'] ?? 3600;
+        $this->enabled   = $config['enabled'] ?? true;
+        $this->ttl       = $config['ttl'] ?? 3600;
     }
 
     /**
-     * Get an item from the cache.
+     * Get an item from the cache with optimized performance.
      */
     public function get(string $key, mixed $default = null): mixed
     {
-        if (!$this->enabled) {
+        // Fast path: disabled cache
+        if (!$this->enabled)
+        {
             return $default;
         }
 
         $this->loadCache();
 
-        if (!isset($this->cache['data'][$key])) {
+        // Fast path: key doesn't exist
+        if (!isset($this->cache['data'][$key]))
+        {
             return $default;
         }
 
         $item = $this->cache['data'][$key];
 
-        // Fast path: skip expiration check in production when TTL is 0 (never expires)
-        if ($this->ttl <= 0) {
+        // Ultra-fast path: never expires (production optimization)
+        if ($this->ttl <= 0)
+        {
             return $item['value'] ?? $default;
         }
 
-        // Check if item has expired
-        if (isset($item['expires']) && time() > $item['expires']) {
+        // Fast path: no expiration set
+        if (!isset($item['expires']))
+        {
+            return $item['value'] ?? $default;
+        }
+
+        // Check expiration only when necessary
+        if (time() > $item['expires'])
+        {
             unset($this->cache['data'][$key]);
-            // Only save if we're not in a critical path
-            if (!app()->isProduction()) {
-                $this->saveCache();
+            // Defer cache save to avoid I/O during request
+            if (!app()->isProduction())
+            {
+                $this->scheduleDelayedSave();
             }
             return $default;
         }
@@ -74,14 +88,15 @@ class UnifiedCacheManager implements CacheManagerInterface
      */
     public function put(string $key, mixed $value, ?int $ttl = null): bool
     {
-        if (!$this->enabled) {
+        if (!$this->enabled)
+        {
             return false;
         }
 
         $this->loadCache();
 
         $effectiveTtl = $ttl ?? $this->ttl;
-        $expires = $effectiveTtl > 0 ? time() + $effectiveTtl : null;
+        $expires      = $effectiveTtl > 0 ? time() + $effectiveTtl : null;
 
         $this->cache['data'][$key] = [
             'value'   => $value,
@@ -100,7 +115,8 @@ class UnifiedCacheManager implements CacheManagerInterface
     {
         $value = $this->get($key);
 
-        if (null !== $value) {
+        if (null !== $value)
+        {
             return is_array($value) ? $value : [];
         }
 
@@ -111,35 +127,19 @@ class UnifiedCacheManager implements CacheManagerInterface
     }
 
     /**
-     * Remember an item in the cache with flexible types and TTL.
-     * Internal method for more flexible caching.
-     */
-    public function rememberFlexible(string $key, callable $callback, ?int $ttl = null): mixed
-    {
-        $value = $this->get($key);
-
-        if (null !== $value) {
-            return $value;
-        }
-
-        $value = $callback();
-        $this->put($key, $value, $ttl);
-
-        return $value;
-    }
-
-    /**
      * Remove an item from the cache.
      */
     public function forget(string $key): void
     {
-        if (!$this->enabled) {
+        if (!$this->enabled)
+        {
             return;
         }
 
         $this->loadCache();
 
-        if (isset($this->cache['data'][$key])) {
+        if (isset($this->cache['data'][$key]))
+        {
             unset($this->cache['data'][$key]);
             $this->saveCache();
         }
@@ -156,7 +156,8 @@ class UnifiedCacheManager implements CacheManagerInterface
             'data'    => [],
         ];
 
-        if (File::exists($this->cacheFile)) {
+        if (File::exists($this->cacheFile))
+        {
             File::delete($this->cacheFile);
         }
     }
@@ -184,19 +185,23 @@ class UnifiedCacheManager implements CacheManagerInterface
             'cache_created' => $this->cache['created'] ?? null,
         ];
 
-        if (isset($this->cache['data'])) {
+        if (isset($this->cache['data']))
+        {
             $expired = 0;
-            $valid = 0;
+            $valid   = 0;
 
-            foreach ($this->cache['data'] as $item) {
-                if (isset($item['expires']) && time() > $item['expires']) {
+            foreach ($this->cache['data'] as $item)
+            {
+                if (isset($item['expires']) && time() > $item['expires'])
+                {
                     $expired++;
-                } else {
+                } else
+                {
                     $valid++;
                 }
             }
 
-            $stats['valid_items'] = $valid;
+            $stats['valid_items']   = $valid;
             $stats['expired_items'] = $expired;
         }
 
@@ -208,37 +213,44 @@ class UnifiedCacheManager implements CacheManagerInterface
      */
     protected function loadCache(): void
     {
-        if ($this->loaded || !$this->enabled) {
+        if ($this->loaded || !$this->enabled)
+        {
             return;
         }
 
         // Production optimization: use static cache to avoid repeated file includes
         $cacheKey = $this->cacheFile;
-        if (app()->isProduction() && isset(static::$staticCache[$cacheKey])) {
-            $this->cache = static::$staticCache[$cacheKey];
+        if (app()->isProduction() && isset(static::$staticCache[$cacheKey]))
+        {
+            $this->cache  = static::$staticCache[$cacheKey];
             $this->loaded = true;
             return;
         }
 
-        if (!File::exists($this->cacheFile)) {
+        if (!File::exists($this->cacheFile))
+        {
             $this->cache = [
                 'version' => '1.0',
                 'created' => time(),
                 'data'    => [],
             ];
-        } else {
-            try {
+        } else
+        {
+            try
+            {
                 $this->cache = include $this->cacheFile;
 
                 // Validate cache structure
-                if (!is_array($this->cache) || !isset($this->cache['data'])) {
+                if (!isset($this->cache['data']))
+                {
                     $this->cache = [
                         'version' => '1.0',
                         'created' => time(),
                         'data'    => [],
                     ];
                 }
-            } catch (Throwable $e) {
+            } catch (Throwable)
+            {
                 // Corrupted cache file, reset
                 $this->cache = [
                     'version' => '1.0',
@@ -249,7 +261,8 @@ class UnifiedCacheManager implements CacheManagerInterface
         }
 
         // Store in static cache for production
-        if (app()->isProduction()) {
+        if (app()->isProduction())
+        {
             static::$staticCache[$cacheKey] = $this->cache;
         }
 
@@ -261,14 +274,17 @@ class UnifiedCacheManager implements CacheManagerInterface
      */
     protected function saveCache(): bool
     {
-        if (!$this->enabled) {
+        if (!$this->enabled)
+        {
             return false;
         }
 
-        try {
+        try
+        {
             // Ensure cache directory exists
             $cacheDir = dirname($this->cacheFile);
-            if (!File::isDirectory($cacheDir)) {
+            if (!File::isDirectory($cacheDir))
+            {
                 File::makeDirectory($cacheDir, 0755, true);
             }
 
@@ -279,7 +295,8 @@ class UnifiedCacheManager implements CacheManagerInterface
 
             return false !== File::put($this->cacheFile, $content);
 
-        } catch (Throwable $e) {
+        } catch (Throwable)
+        {
             return false;
         }
     }
@@ -307,5 +324,28 @@ class UnifiedCacheManager implements CacheManagerInterface
     public function isCacheEnabled(): bool
     {
         return $this->enabled;
+    }
+
+    /**
+     * Schedule a delayed save to avoid I/O during critical paths.
+     */
+    protected function scheduleDelayedSave(): void
+    {
+        if ($this->needsDelayedSave)
+        {
+            return; // Already scheduled
+        }
+
+        $this->needsDelayedSave = true;
+
+        // Register shutdown function to save cache after response
+        register_shutdown_function(function (): void
+        {
+            if ($this->needsDelayedSave)
+            {
+                $this->saveCache();
+                $this->needsDelayedSave = false;
+            }
+        });
     }
 }
