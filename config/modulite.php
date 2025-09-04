@@ -85,7 +85,7 @@ return [
             'auto_register'            => env('MODULITE_AUTO_REGISTER_PANELS', true),
             'sort_by'                  => 'priority', // 'priority', 'name', 'none'
             'respect_environment'      => true,
-            'validate_before_register' => app()->hasDebugModeEnabled(),
+            'validate_before_register' => env('MODULITE_VALIDATE_BEFORE_REGISTER', env('APP_DEBUG', false)),
         ],
 
         /*
@@ -189,7 +189,7 @@ return [
         'registration' => [
             'auto_register'            => env('MODULITE_AUTO_REGISTER_COMPONENTS', true),
             'sort_by'                  => env('MODULITE_SORT_COMPONENTS', 'none'), // 'name', 'priority', 'none'
-            'validate_before_register' => env('MODULITE_VALIDATE_COMPONENTS', app()->hasDebugModeEnabled()),
+            'validate_before_register' => env('MODULITE_VALIDATE_COMPONENTS', env('APP_DEBUG', false)),
             'group_by_module'          => true,
         ],
 
@@ -251,7 +251,7 @@ return [
         | request. Recommended: true for production, false for development.
         |
         */
-        'enabled' => env('MODULITE_CACHE_ENABLED', !app()->hasDebugModeEnabled()),
+        'enabled' => env('MODULITE_CACHE_ENABLED', !env('APP_DEBUG', false)),
 
         /*
         |--------------------------------------------------------------------------
@@ -275,7 +275,7 @@ return [
         | Set to 0 in production for maximum performance (never expires).
         |
         */
-        'ttl' => env('MODULITE_CACHE_TTL', app()->hasDebugModeEnabled() ? 300 : 0),
+        'ttl' => env('MODULITE_CACHE_TTL', env('APP_DEBUG', false) ? 300 : 0),
 
         /*
         |--------------------------------------------------------------------------
@@ -286,7 +286,7 @@ return [
         | Only works in development mode for performance reasons.
         |
         */
-        'auto_invalidate' => app()->hasDebugModeEnabled(),
+        'auto_invalidate' => env('MODULITE_AUTO_INVALIDATE', env('APP_DEBUG', false)),
 
         /*
         |--------------------------------------------------------------------------
@@ -312,9 +312,9 @@ return [
         */
         'optimizations' => [
             'static_caching'        => env('MODULITE_STATIC_CACHING', true),
-            'defer_validation'      => env('MODULITE_DEFER_VALIDATION', !app()->hasDebugModeEnabled()),
+            'defer_validation'      => env('MODULITE_DEFER_VALIDATION', !env('APP_DEBUG', false)),
             'skip_duplicate_panels' => env('MODULITE_SKIP_DUPLICATE_PANELS', true),
-            'disable_reflection'    => env('MODULITE_DISABLE_REFLECTION', app()->isProduction()),
+            'disable_reflection'    => env('MODULITE_DISABLE_REFLECTION', 'production' === env('APP_ENV')),
         ],
     ],
 
@@ -436,7 +436,7 @@ return [
         | Enable/disable logging and configure log channels.
         |
         */
-        'enabled' => env('MODULITE_LOGGING_ENABLED', app()->hasDebugModeEnabled()),
+        'enabled' => env('MODULITE_LOGGING_ENABLED', env('APP_DEBUG', false)),
         'channel' => env('MODULITE_LOG_CHANNEL', 'stack'),
         'level'   => env('MODULITE_LOG_LEVEL', 'info'),
 
@@ -448,9 +448,9 @@ return [
         | Log performance metrics for optimization and monitoring.
         |
         */
-        'log_discovery_time' => app()->hasDebugModeEnabled(),
-        'log_cache_hits'     => app()->hasDebugModeEnabled(),
-        'log_scan_stats'     => app()->hasDebugModeEnabled(),
+        'log_discovery_time' => env('MODULITE_LOG_DISCOVERY_TIME', env('APP_DEBUG', false)),
+        'log_cache_hits'     => env('MODULITE_LOG_CACHE_HITS', env('APP_DEBUG', false)),
+        'log_scan_stats'     => env('MODULITE_LOG_SCAN_STATS', env('APP_DEBUG', false)),
     ],
 
     /*
@@ -470,9 +470,9 @@ return [
         | Control whether errors are thrown or handled silently.
         |
         */
-        'fail_silently'       => !app()->hasDebugModeEnabled(),
-        'log_errors'          => true,
-        'max_errors_per_scan' => 10,
+        'fail_silently'       => env('MODULITE_FAIL_SILENTLY', !env('APP_DEBUG', false)),
+        'log_errors'          => env('MODULITE_LOG_ERRORS', true),
+        'max_errors_per_scan' => env('MODULITE_MAX_ERRORS_PER_SCAN', 10),
 
         /*
         |--------------------------------------------------------------------------
@@ -482,7 +482,7 @@ return [
         | Configure handling of validation errors during discovery.
         |
         */
-        'throw_on_invalid_class'        => app()->hasDebugModeEnabled(),
-        'throw_on_missing_requirements' => app()->hasDebugModeEnabled(),
+        'throw_on_invalid_class'        => env('MODULITE_THROW_ON_INVALID_CLASS', env('APP_DEBUG', false)),
+        'throw_on_missing_requirements' => env('MODULITE_THROW_ON_MISSING_REQUIREMENTS', env('APP_DEBUG', false)),
     ],
 ];

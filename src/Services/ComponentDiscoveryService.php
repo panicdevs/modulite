@@ -71,13 +71,13 @@ class ComponentDiscoveryService implements ComponentScannerInterface
         }
 
         // Only measure time in development
-        $startTime = app()->hasDebugModeEnabled() ? microtime(true) : 0;
+        $startTime = config('app.debug', false) ? microtime(true) : 0;
 
         // Discover components efficiently
         $components = $this->performOptimizedDiscovery($panelName);
 
         // Update stats only in development
-        if (app()->hasDebugModeEnabled())
+        if (config('app.debug', false))
         {
             $this->stats['scan_time'] = microtime(true) - $startTime;
         }
