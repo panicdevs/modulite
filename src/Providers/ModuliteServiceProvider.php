@@ -79,7 +79,13 @@ class ModuliteServiceProvider extends ServiceProvider
     {
         $this->registerConfiguration();
         $this->registerCoreServices();
-        $this->app->beforeResolving(self::FILAMENT_NAMESPACE, fn() => $this->registerPanelDiscovery());
+        if ('nwidart' === config('modulite.modules.approach'))
+        {
+            $this->app->beforeResolving('filament', fn() => $this->registerPanelDiscovery());
+        } else
+        {
+            $this->registerPanelDiscovery();
+        }
         $this->registerCacheInvalidationListeners();
     }
 
@@ -96,6 +102,7 @@ class ModuliteServiceProvider extends ServiceProvider
         $this->publishConfiguration();
         $this->validateConfiguration();
         $this->setupDevelopmentHelpers();
+        $this->registerCommands();
     }
 
     /**
@@ -119,7 +126,7 @@ class ModuliteServiceProvider extends ServiceProvider
         });
 
         // Register ModuleResolver based on configuration
-        $this->app->singleton(ModuleResolverInterface::class, fn (Application $app) => $this->createModuleResolver($app));
+        $this->app->singleton(ModuleResolverInterface::class, fn(Application $app) => $this->createModuleResolver($app));
 
         // Register PanelScannerService with dependencies
         $this->app->singleton(PanelScannerInterface::class, function (Application $app)
@@ -356,7 +363,7 @@ class ModuliteServiceProvider extends ServiceProvider
      */
     protected function validateConfiguration(): void
     {
-        if (!$this->app->hasDebugModeEnabled())
+        if (!config('app.debug', false))
         {
             return;
         }
@@ -393,16 +400,7 @@ class ModuliteServiceProvider extends ServiceProvider
             }
         }
 
-        // Validate cache configuration
-        if ($config['cache']['enabled'] ?? false)
-        {
-            $driver = $config['cache']['driver'] ?? 'file';
-            if (!in_array($driver, ['file', 'redis', 'memcached', 'array', 'database'], true))
-            {
-                Log::channel(config('modulite.logging.channel', 'default'))
-                    ->warning("Modulite cache driver '{$driver}' may not be supported");
-            }
-        }
+        // Cache configuration validation removed as we use file-based cache only
     }
 
     /**
@@ -410,26 +408,26 @@ class ModuliteServiceProvider extends ServiceProvider
      */
     protected function setupDevelopmentHelpers(): void
     {
-        // Register artisan commands if available
-        if ($this->app->runningInConsole())
-        {
-            $this->registerConsoleCommands();
-        }
+        // Development helpers are now registered in registerCommands()
     }
 
     /**
-     * Register console commands for development.
+     * Register console commands.
      */
-    protected function registerConsoleCommands(): void
+    protected function registerCommands(): void
     {
-        $this->commands([
-            ModuliteClearCacheCommand::class,
-            ModuliteStatusCommand::class,
-            ModuliteOptimizeCommand::class,
-        ]);
+        // Only register commands in console environment
+        if ($this->app->runningInConsole())
+        {
+            $this->commands([
+                ModuliteClearCacheCommand::class,
+                ModuliteStatusCommand::class,
+                ModuliteOptimizeCommand::class,
+            ]);
 
-        // Note: Laravel optimize integration removed to prevent circular dependencies
-        // Users should manually run: php artisan modulite:cache
+            // Register optimization commands with Laravel's optimize system
+            $this->optimizes('modulite:cache', clear: 'modulite:clear');
+        }
     }
 
     /**
@@ -444,7 +442,7 @@ class ModuliteServiceProvider extends ServiceProvider
         }
 
         // In production, always perform discovery to ensure routes are cached properly
-        if ($this->app->isProduction())
+        if ('production' === config('app.env'))
         {
             return true;
         }

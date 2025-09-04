@@ -73,7 +73,7 @@ class UnifiedCacheManager implements CacheManagerInterface
         {
             unset($this->cache['data'][$key]);
             // Defer cache save to avoid I/O during request
-            if (!app()->isProduction())
+            if ('production' !== env('APP_ENV'))
             {
                 $this->scheduleDelayedSave();
             }
@@ -220,7 +220,7 @@ class UnifiedCacheManager implements CacheManagerInterface
 
         // Production optimization: use static cache to avoid repeated file includes
         $cacheKey = $this->cacheFile;
-        if (app()->isProduction() && isset(static::$staticCache[$cacheKey]))
+        if ('production' === env('APP_ENV') && isset(static::$staticCache[$cacheKey]))
         {
             $this->cache  = static::$staticCache[$cacheKey];
             $this->loaded = true;
@@ -261,7 +261,7 @@ class UnifiedCacheManager implements CacheManagerInterface
         }
 
         // Store in static cache for production
-        if (app()->isProduction())
+        if ('production' === env('APP_ENV'))
         {
             static::$staticCache[$cacheKey] = $this->cache;
         }
@@ -324,6 +324,15 @@ class UnifiedCacheManager implements CacheManagerInterface
     public function isCacheEnabled(): bool
     {
         return $this->enabled;
+    }
+
+    /**
+     * Temporarily enable caching for command operations.
+     * Useful for development when cache is normally disabled.
+     */
+    public function enableTemporarily(): void
+    {
+        $this->enabled = true;
     }
 
     /**

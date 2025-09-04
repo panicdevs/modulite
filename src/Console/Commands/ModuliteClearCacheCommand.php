@@ -10,6 +10,7 @@ use Throwable;
 
 /**
  * Command to clear all Modulite caches.
+ * This command is automatically called by Laravel's `optimize:clear` command.
  */
 class ModuliteClearCacheCommand extends Command
 {
@@ -20,12 +21,6 @@ class ModuliteClearCacheCommand extends Command
 
     public function handle(CacheManagerInterface $cacheManager): int
     {
-        if (!$this->option('force') && !$this->confirm('Are you sure you want to clear all Modulite caches?'))
-        {
-            $this->info('Cache clear cancelled.');
-            return self::SUCCESS;
-        }
-
         $this->info('Clearing Modulite caches...');
 
         try
