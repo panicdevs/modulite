@@ -7,10 +7,8 @@ namespace PanicDevs\Modulite\Plugins;
 use Filament\Contracts\Plugin;
 use Filament\Panel;
 use Illuminate\Support\Facades\Log;
-use PanicDevs\Modulite\Attributes\ComponentDiscovery;
 use PanicDevs\Modulite\Contracts\CacheManagerInterface;
 use PanicDevs\Modulite\Contracts\ComponentScannerInterface;
-use ReflectionClass;
 use Throwable;
 
 /**
@@ -22,23 +20,22 @@ use Throwable;
  * - Widgets from modules/{ModuleName}/Filament/{PanelName}/Widgets
  *
  * Features:
- * - Configurable scan locations with pattern support
- * - Multi-layer caching for performance
- * - Development vs production optimizations
- * - Comprehensive error handling and logging
- * - Component validation and sorting
+ * - Directory-structure based discovery (no attributes needed)
+ * - Multi-layer caching for optimal performance
+ * - Production vs development optimizations
+ * - Graceful error handling and optional logging
+ * - Smart validation and duplicate prevention
  *
  * Usage:
  * ```php
+ * // Simple usage - all configuration through config/modulite.php
  * $panel->plugin(ModulitePlugin::make());
- *
- * // Or with custom configuration
- * $panel->plugin(
- *     ModulitePlugin::make()
- *         ->enableCaching(false)
- *         ->sortComponentsBy('priority')
- * );
  * ```
+ *
+ * Directory Structure:
+ * - modules/{Module}/Filament/{Panel}/Resources/
+ * - modules/{Module}/Filament/{Panel}/Pages/
+ * - modules/{Module}/Filament/{Panel}/Widgets/
  *
  * @package PanicDevs\Modulite\Plugins
  */
@@ -62,6 +59,27 @@ class ModulitePlugin implements Plugin
     protected ?CacheManagerInterface $cacheManager = null;
 
     /**
+     * Static cache for repeated requests to avoid service container lookups.
+     * @var array<string, mixed>
+     */
+    protected static array $staticCache = [];
+
+    /**
+     * Flag to track if discovery has been performed for this panel.
+     * @var array<string, bool>
+     */
+    protected static array $discoveredPanels = [];
+
+    /**
+     * Clear all static caches (useful for testing or cache invalidation).
+     */
+    public static function clearStaticCaches(): void
+    {
+        static::$staticCache      = [];
+        static::$discoveredPanels = [];
+    }
+
+    /**
      * Get the plugin identifier.
      */
     public function getId(): string
@@ -81,25 +99,46 @@ class ModulitePlugin implements Plugin
      * Register the plugin with a panel.
      *
      * This is where the magic happens - components are discovered and registered.
+     * Optimized for performance with early returns and static caching.
      */
     public function register(Panel $panel): void
     {
-        if (!$this->shouldPerformDiscovery()) {
+        // Fast path: check if discovery should be performed
+        if (!$this->shouldPerformDiscovery())
+        {
             return;
         }
 
-        try {
+        try
+        {
             $panelId = $this->getPanelId($panel);
 
-            // Apply panel-specific configuration from attributes
-            $this->applyPanelConfiguration($panel);
+            // Fast path: avoid duplicate discovery for the same panel
+            if (isset(static::$discoveredPanels[$panelId]))
+            {
+                return;
+            }
 
-            $components = $this->discoverComponents($panelId);
+            // Mark panel as discovered to prevent duplicate work
+            static::$discoveredPanels[$panelId] = true;
 
-            $this->registerComponents($panel, $components);
-            $this->logRegistrationSuccess($panelId, $components);
+            // Skip attribute-based configuration - use pure discovery
+            // $this->applyPanelConfigurationOptimized($panel);
 
-        } catch (Throwable $e) {
+            // Discover components with enhanced caching
+            $components = $this->discoverComponentsOptimized($panelId);
+
+            // Register components with minimal overhead
+            $this->registerComponentsOptimized($panel, $components);
+
+            // Only log in development mode
+            if (app()->hasDebugModeEnabled())
+            {
+                $this->logRegistrationSuccess($panelId, $components);
+            }
+
+        } catch (Throwable $e)
+        {
             $this->handleRegistrationError($panel, $e);
         }
     }
@@ -113,93 +152,45 @@ class ModulitePlugin implements Plugin
         $this->logPluginBooted($panel);
     }
 
+    // Configuration methods removed - use config file instead for better performance
+
     /**
-     * Enable or disable caching for component discovery.
-     *
-     * @param bool $enabled Whether to enable caching
-     * @return static
+     * Optimized component discovery with multi-layer caching.
      */
-    public function enableCaching(bool $enabled = true): static
+    protected function discoverComponentsOptimized(string $panelId): array
     {
-        $this->options['cache_enabled'] = $enabled;
-        return $this;
+        // Layer 1: Static cache for current request
+        $staticKey = "components_{$panelId}";
+        if (isset(static::$staticCache[$staticKey]))
+        {
+            return static::$staticCache[$staticKey];
+        }
+
+        // Layer 2: Persistent cache
+        $cacheKey = "components.{$panelId}";
+
+        if ($this->isCachingEnabled())
+        {
+            $components = $this->getCacheManager()->remember($cacheKey, fn () => $this->performComponentDiscovery($panelId));
+        } else
+        {
+            $components = $this->performComponentDiscovery($panelId);
+        }
+
+        // Store in static cache for this request
+        static::$staticCache[$staticKey] = $components;
+
+        return $components;
     }
 
     /**
-     * Set how components should be sorted before registration.
+     * Legacy method for backward compatibility.
      *
-     * @param string $sortBy Sorting method: 'name', 'priority', or 'none'
-     * @return static
-     */
-    public function sortComponentsBy(string $sortBy): static
-    {
-        $this->options['sort_by'] = $sortBy;
-        return $this;
-    }
-
-    /**
-     * Enable or disable component validation.
-     *
-     * @param bool $enabled Whether to validate components
-     * @return static
-     */
-    public function validateComponents(bool $enabled = true): static
-    {
-        $this->options['validate_components'] = $enabled;
-        return $this;
-    }
-
-    /**
-     * Set custom scan locations for this plugin instance.
-     *
-     * @param array<string> $locations Custom scan locations
-     * @return static
-     */
-    public function scanLocations(array $locations): static
-    {
-        $this->options['scan_locations'] = $locations;
-        return $this;
-    }
-
-    /**
-     * Enable or disable specific component types.
-     *
-     * @param array<string, bool> $types Component types to enable/disable
-     * @return static
-     */
-    public function componentTypes(array $types): static
-    {
-        $this->options['component_types'] = $types;
-        return $this;
-    }
-
-    /**
-     * Set excluded directories for scanning.
-     *
-     * @param array<string> $excludedDirs Directories to exclude
-     * @return static
-     */
-    public function excludeDirectories(array $excludedDirs): static
-    {
-        $this->options['excluded_directories'] = $excludedDirs;
-        return $this;
-    }
-
-    /**
-     * Discover components for a panel.
-     *
-     * Uses caching when enabled for performance optimization.
-     * Also checks for panel-specific configuration from attributes.
+     * @deprecated Use discoverComponentsOptimized instead
      */
     protected function discoverComponents(string $panelId): array
     {
-        $cacheKey = "components.{$panelId}";
-
-        if ($this->isCachingEnabled()) {
-            return $this->getCacheManager()->remember($cacheKey, fn () => $this->performComponentDiscovery($panelId));
-        }
-
-        return $this->performComponentDiscovery($panelId);
+        return $this->discoverComponentsOptimized($panelId);
     }
 
     /**
@@ -212,22 +203,81 @@ class ModulitePlugin implements Plugin
     }
 
     /**
-     * Register discovered components with the panel.
+     * Optimized component registration with minimal overhead.
      */
-    protected function registerComponents(Panel $panel, array $components): void
+    protected function registerComponentsOptimized(Panel $panel, array $components): void
     {
-        $enabledTypes = $this->getEnabledComponentTypes();
+        // Fast path: early return if no components
+        if (empty($components))
+        {
+            return;
+        }
 
-        foreach ($components as $type => $classList) {
-            if (!isset($enabledTypes[$type]) || !$enabledTypes[$type]) {
+        // Cache enabled types to avoid repeated config lookups
+        static $enabledTypesCache = null;
+        if (null === $enabledTypesCache)
+        {
+            $enabledTypesCache = $this->getEnabledComponentTypes();
+        }
+
+        // Process each component type efficiently
+        foreach ($components as $type => $classList)
+        {
+            // Fast path: skip disabled types
+            if (empty($classList) || !($enabledTypesCache[$type] ?? true))
+            {
                 continue;
             }
 
-            $sortedComponents = $this->sortComponents($classList, $type);
-            $validatedComponents = $this->validateComponentsIfEnabled($sortedComponents, $type);
+            // Skip expensive operations if not needed
+            $finalComponents = $this->processComponentsForRegistration($classList, $type);
 
-            $this->registerComponentType($panel, $type, $validatedComponents);
+            if (!empty($finalComponents))
+            {
+                $this->registerComponentType($panel, $type, $finalComponents);
+            }
         }
+    }
+
+    /**
+     * Legacy method for backward compatibility.
+     *
+     * @deprecated Use registerComponentsOptimized instead
+     */
+    protected function registerComponents(Panel $panel, array $components): void
+    {
+        $this->registerComponentsOptimized($panel, $components);
+    }
+
+    /**
+     * Process components for registration with optional sorting and validation.
+     */
+    protected function processComponentsForRegistration(array $classList, string $type): array
+    {
+        // Skip processing if validation and sorting are disabled
+        $needsValidation = $this->isValidationEnabled();
+        $needsSorting    = ($this->options['sort_by'] ?? 'none') !== 'none';
+
+        if (!$needsValidation && !$needsSorting)
+        {
+            return $classList;
+        }
+
+        $components = $classList;
+
+        // Apply sorting only if needed
+        if ($needsSorting)
+        {
+            $components = $this->sortComponents($components, $type);
+        }
+
+        // Apply validation only if enabled
+        if ($needsValidation)
+        {
+            $components = $this->validateComponentsIfEnabled($components, $type);
+        }
+
+        return $components;
     }
 
     /**
@@ -235,11 +285,13 @@ class ModulitePlugin implements Plugin
      */
     protected function registerComponentType(Panel $panel, string $type, array $components): void
     {
-        if (empty($components)) {
+        if (empty($components))
+        {
             return;
         }
 
-        switch ($type) {
+        switch ($type)
+        {
             case 'resources':
                 $panel->resources($components);
                 break;
@@ -261,7 +313,8 @@ class ModulitePlugin implements Plugin
     {
         $sortBy = $this->options['sort_by'] ?? config('modulite.components.registration.sort_by', 'name');
 
-        switch ($sortBy) {
+        switch ($sortBy)
+        {
             case 'name':
                 sort($components);
                 break;
@@ -294,11 +347,14 @@ class ModulitePlugin implements Plugin
      */
     protected function getComponentPriority(string $className): int
     {
-        try {
-            if (method_exists($className, 'getPriority')) {
+        try
+        {
+            if (method_exists($className, 'getPriority'))
+            {
                 return $className::getPriority();
             }
-        } catch (Throwable) {
+        } catch (Throwable)
+        {
             // Ignore errors getting priority
         }
 
@@ -310,17 +366,21 @@ class ModulitePlugin implements Plugin
      */
     protected function validateComponentsIfEnabled(array $components, string $type): array
     {
-        if (!$this->isValidationEnabled()) {
+        if (!$this->isValidationEnabled())
+        {
             return $components;
         }
 
-        $scanner = $this->getComponentScanner();
+        $scanner         = $this->getComponentScanner();
         $validComponents = [];
 
-        foreach ($components as $component) {
-            if ($scanner->isComponentType($component, $type)) {
+        foreach ($components as $component)
+        {
+            if ($scanner->isComponentType($component, $type))
+            {
                 $validComponents[] = $component;
-            } else {
+            } else
+            {
                 $this->logInvalidComponent($component, $type);
             }
         }
@@ -337,29 +397,50 @@ class ModulitePlugin implements Plugin
     }
 
     /**
-     * Check if discovery should be performed.
+     * Check if discovery should be performed with caching.
      */
     protected function shouldPerformDiscovery(): bool
     {
-        return config('modulite.components.registration.auto_register', true);
+        static $shouldPerform = null;
+
+        if (null === $shouldPerform)
+        {
+            $shouldPerform = config('modulite.components.registration.auto_register', true);
+        }
+
+        return $shouldPerform;
     }
 
     /**
-     * Check if caching is enabled.
+     * Check if caching is enabled with static caching.
      */
     protected function isCachingEnabled(): bool
     {
-        return $this->options['cache_enabled']
-            ?? config('modulite.cache.enabled', true);
+        static $cacheEnabled = null;
+
+        if (null === $cacheEnabled)
+        {
+            $cacheEnabled = $this->options['cache_enabled']
+                ?? config('modulite.cache.enabled', true);
+        }
+
+        return $cacheEnabled;
     }
 
     /**
-     * Check if validation is enabled.
+     * Check if validation is enabled with static caching.
      */
     protected function isValidationEnabled(): bool
     {
-        return $this->options['validate_components']
-            ?? config('modulite.components.registration.validate_before_register', false);
+        static $validationEnabled = null;
+
+        if (null === $validationEnabled)
+        {
+            $validationEnabled = $this->options['validate_components']
+                ?? config('modulite.components.registration.validate_before_register', false);
+        }
+
+        return $validationEnabled;
     }
 
     /**
@@ -368,10 +449,11 @@ class ModulitePlugin implements Plugin
     protected function getEnabledComponentTypes(): array
     {
         $configured = config('modulite.components.types', []);
-        $override = $this->options['component_types'] ?? [];
+        $override   = $this->options['component_types'] ?? [];
 
         $enabled = [];
-        foreach ($configured as $type => $settings) {
+        foreach ($configured as $type => $settings)
+        {
             $enabled[$type] = $override[$type] ?? ($settings['enabled'] ?? true);
         }
 
@@ -379,128 +461,43 @@ class ModulitePlugin implements Plugin
     }
 
     /**
-     * Get component scanner service.
+     * Get component scanner service with static caching.
      */
     protected function getComponentScanner(): ComponentScannerInterface
     {
-        if (!$this->componentScanner) {
-            $this->componentScanner = app(ComponentScannerInterface::class);
+        // Use static cache to avoid repeated service container lookups
+        static $instance = null;
+
+        if (null === $instance)
+        {
+            $instance = app(ComponentScannerInterface::class);
         }
 
-        return $this->componentScanner;
+        return $instance;
     }
 
     /**
-     * Get cache manager service.
+     * Get cache manager service with static caching.
      */
     protected function getCacheManager(): CacheManagerInterface
     {
-        if (!$this->cacheManager) {
-            $this->cacheManager = app(CacheManagerInterface::class);
+        // Use static cache to avoid repeated service container lookups
+        static $instance = null;
+
+        if (null === $instance)
+        {
+            $instance = app(CacheManagerInterface::class);
         }
 
-        return $this->cacheManager;
+        return $instance;
     }
 
-    /**
-     * Apply panel-specific configuration from ComponentDiscovery attribute.
-     *
-     * Looks for the ComponentDiscovery attribute on panel provider classes
-     * and applies the configuration to override defaults.
-     */
-    protected function applyPanelConfiguration(Panel $panel): void
-    {
-        try {
-            // Try to find the panel provider class
-            $panelProvider = $this->findPanelProvider($panel);
 
-            if (!$panelProvider) {
-                return; // No provider found, use defaults
-            }
 
-            $reflection = new ReflectionClass($panelProvider);
-            $attributes = $reflection->getAttributes(ComponentDiscovery::class);
+    // Note: Attribute-based configuration has been removed for performance.
+    // All configuration is now handled through the config file and directory structure.
 
-            if (empty($attributes)) {
-                return; // No ComponentDiscovery attribute, use defaults
-            }
 
-            $discoveryAttribute = $attributes[0]->newInstance();
-            $panelId = $this->getPanelId($panel);
-
-            // Apply attribute configuration to plugin options
-            $this->applyAttributeConfiguration($discoveryAttribute, $panelId);
-
-        } catch (Throwable $e) {
-            // Log error but don't fail - continue with defaults
-            $this->logConfigurationError($panel, $e);
-        }
-    }
-
-    /**
-     * Find the panel provider class for a panel.
-     *
-     * This is a best-effort attempt to find the provider class.
-     */
-    protected function findPanelProvider(Panel $panel): ?string
-    {
-        // Try common panel provider naming patterns
-        $panelId = $this->getPanelId($panel);
-        $patterns = [
-            ucfirst($panelId).'PanelProvider',
-            ucfirst($panelId).'Panel',
-            'App\\Providers\\Filament\\'.ucfirst($panelId).'PanelProvider',
-            'App\\Providers\\'.ucfirst($panelId).'PanelProvider',
-        ];
-
-        foreach ($patterns as $pattern) {
-            if (class_exists($pattern)) {
-                return $pattern;
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * Apply configuration from ComponentDiscovery attribute.
-     */
-    protected function applyAttributeConfiguration(ComponentDiscovery $attribute, string $panelId): void
-    {
-        // Apply scan locations
-        if (null !== $attribute->locations) {
-            $this->options['scan_locations'] = $attribute->getLocations($panelId);
-        }
-
-        // Apply enabled types
-        if (null !== $attribute->enabledTypes) {
-            $this->options['component_types'] = $attribute->getEnabledTypes();
-        }
-
-        // Apply excluded directories
-        if (null !== $attribute->excludedDirectories) {
-            $this->options['excluded_directories'] = $attribute->getExcludedDirectories();
-        }
-
-        // Apply cache setting
-        if (null !== $attribute->cacheEnabled) {
-            $this->options['cache_enabled'] = $attribute->isCacheEnabled();
-        }
-
-        // Apply sort setting
-        if (null !== $attribute->sortBy) {
-            $this->options['sort_by'] = $attribute->getSortBy();
-        }
-
-        // Apply validation setting
-        if (null !== $attribute->validateComponents) {
-            $this->options['validate_components'] = $attribute->isValidationEnabled();
-        }
-
-        // Apply additional options
-        $additionalOptions = $attribute->getOptions();
-        $this->options = array_merge($this->options, $additionalOptions);
-    }
 
     /**
      * Handle registration errors.
@@ -509,7 +506,8 @@ class ModulitePlugin implements Plugin
     {
         $panelId = $this->getPanelId($panel);
 
-        if (config('modulite.error_handling.fail_silently', false)) {
+        if (config('modulite.error_handling.fail_silently', false))
+        {
             $this->logRegistrationError($panelId, $e);
             return;
         }
@@ -517,10 +515,13 @@ class ModulitePlugin implements Plugin
         throw $e;
     }
 
-    // Logging methods...
+    /**
+     * Log successful component registration.
+     */
     protected function logRegistrationSuccess(string $panelId, array $components): void
     {
-        if (!config('modulite.logging.enabled', false)) {
+        if (!config('modulite.logging.enabled', false))
+        {
             return;
         }
 
@@ -534,9 +535,13 @@ class ModulitePlugin implements Plugin
             ]);
     }
 
+    /**
+     * Log component registration errors.
+     */
     protected function logRegistrationError(string $panelId, Throwable $e): void
     {
-        if (!config('modulite.logging.enabled', false)) {
+        if (!config('modulite.logging.enabled', false))
+        {
             return;
         }
 
@@ -549,9 +554,13 @@ class ModulitePlugin implements Plugin
             ]);
     }
 
+    /**
+     * Log plugin boot completion.
+     */
     protected function logPluginBooted(Panel $panel): void
     {
-        if (!config('modulite.logging.enabled', false) || !config('modulite.development.verbose_logging', false)) {
+        if (!config('modulite.logging.enabled', false) || !app()->hasDebugModeEnabled())
+        {
             return;
         }
 
@@ -559,9 +568,13 @@ class ModulitePlugin implements Plugin
             ->debug("ModulitePlugin: Plugin booted for panel: {$panel->getId()}");
     }
 
+    /**
+     * Log unknown component type warnings.
+     */
     protected function logUnknownComponentType(string $type): void
     {
-        if (!config('modulite.logging.enabled', false)) {
+        if (!config('modulite.logging.enabled', false))
+        {
             return;
         }
 
@@ -569,9 +582,13 @@ class ModulitePlugin implements Plugin
             ->warning("ModulitePlugin: Unknown component type: {$type}");
     }
 
+    /**
+     * Log invalid component discoveries.
+     */
     protected function logInvalidComponent(string $component, string $type): void
     {
-        if (!config('modulite.logging.enabled', false) || !config('modulite.development.verbose_logging', false)) {
+        if (!config('modulite.logging.enabled', false) || !app()->hasDebugModeEnabled())
+        {
             return;
         }
 
@@ -579,18 +596,5 @@ class ModulitePlugin implements Plugin
             ->debug("ModulitePlugin: Invalid component for type {$type}: {$component}");
     }
 
-    protected function logConfigurationError(Panel $panel, Throwable $e): void
-    {
-        if (!config('modulite.logging.enabled', false)) {
-            return;
-        }
 
-        Log::channel(config('modulite.logging.channel', 'default'))
-            ->warning("ModulitePlugin: Failed to apply panel configuration for panel: {$panel->getId()}", [
-                'panel_id' => $panel->getId(),
-                'error'    => $e->getMessage(),
-                'file'     => $e->getFile(),
-                'line'     => $e->getLine()
-            ]);
-    }
 }

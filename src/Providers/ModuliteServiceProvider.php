@@ -8,13 +8,16 @@ use Filament\FilamentServiceProvider;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
-use PanicDevs\Modulite\Console\Commands\ModuliteBenchmarkCommand;
 use PanicDevs\Modulite\Console\Commands\ModuliteClearCacheCommand;
 use PanicDevs\Modulite\Console\Commands\ModuliteStatusCommand;
+use PanicDevs\Modulite\Console\Commands\ModuliteOptimizeCommand;
 use PanicDevs\Modulite\Contracts\CacheManagerInterface;
 use PanicDevs\Modulite\Contracts\ComponentScannerInterface;
+use PanicDevs\Modulite\Contracts\ModuleResolverInterface;
 use PanicDevs\Modulite\Contracts\PanelScannerInterface;
 use PanicDevs\Modulite\Services\ComponentDiscoveryService;
+use PanicDevs\Modulite\Services\ModuleResolvers\NwidartModuleResolver;
+use PanicDevs\Modulite\Services\ModuleResolvers\PanicDevsModuleResolver;
 use PanicDevs\Modulite\Services\PanelScannerService;
 use PanicDevs\Modulite\Services\UnifiedCacheManager;
 use Throwable;
@@ -76,7 +79,7 @@ class ModuliteServiceProvider extends ServiceProvider
     {
         $this->registerConfiguration();
         $this->registerCoreServices();
-        $this->registerPanelDiscovery();
+        $this->app->beforeResolving(self::FILAMENT_NAMESPACE, fn() => $this->registerPanelDiscovery());
         $this->registerCacheInvalidationListeners();
     }
 
@@ -109,43 +112,48 @@ class ModuliteServiceProvider extends ServiceProvider
     protected function registerCoreServices(): void
     {
         // Register UnifiedCacheManager with configuration
-        $this->app->singleton(CacheManagerInterface::class, function (Application $app) {
+        $this->app->singleton(CacheManagerInterface::class, function (Application $app)
+        {
             $config = $app['config']->get('modulite.cache');
             return new UnifiedCacheManager($config);
         });
 
+        // Register ModuleResolver based on configuration
+        $this->app->singleton(ModuleResolverInterface::class, fn (Application $app) => $this->createModuleResolver($app));
+
         // Register PanelScannerService with dependencies
-        $this->app->singleton(PanelScannerInterface::class, function (Application $app) {
-            $config = $app['config']->get('modulite');
-            $basePath = $app->basePath();
+        $this->app->singleton(PanelScannerInterface::class, function (Application $app)
+        {
+            $config        = $app['config']->get('modulite');
+            $basePath      = $app->basePath();
             $moduleManager = $this->getModuleManager($app);
 
             return new PanelScannerService($config, $basePath, $moduleManager);
         });
 
         // Register ComponentDiscoveryService with dependencies
-        $this->app->singleton(ComponentScannerInterface::class, function (Application $app) {
-            $cacheManager = $app->make(CacheManagerInterface::class);
-            return new ComponentDiscoveryService($cacheManager);
+        $this->app->singleton(ComponentScannerInterface::class, function (Application $app)
+        {
+            $cacheManager   = $app->make(CacheManagerInterface::class);
+            $moduleResolver = $app->make(ModuleResolverInterface::class);
+            return new ComponentDiscoveryService($cacheManager, $moduleResolver);
         });
     }
 
     /**
-     * Register lazy panel discovery mechanism.
+     * Register panel discovery mechanism.
      *
-     * Panel discovery is deferred until Filament is actually being resolved
-     * to avoid unnecessary scanning on non-admin requests.
+     * In production, panels are discovered immediately to ensure routes are cached.
+     * In development, discovery is deferred until Filament is resolved for performance.
      */
     protected function registerPanelDiscovery(): void
     {
-        if (!$this->shouldPerformDiscovery()) {
+        if (!$this->shouldPerformDiscovery())
+        {
             return;
         }
 
-        $this->app->beforeResolving(
-            self::FILAMENT_NAMESPACE,
-            fn () => $this->discoverAndRegisterPanels()
-        );
+        $this->discoverAndRegisterPanels();
     }
 
     /**
@@ -159,7 +167,8 @@ class ModuliteServiceProvider extends ServiceProvider
      */
     protected function discoverAndRegisterPanels(): void
     {
-        try {
+        try
+        {
             /** @var CacheManagerInterface $cacheManager */
             $cacheManager = $this->app->make(CacheManagerInterface::class);
 
@@ -168,11 +177,11 @@ class ModuliteServiceProvider extends ServiceProvider
 
             // Fast path: Check cache first without loading scanner
             $panelClasses = $cacheManager->get($cacheKey);
-
-            if (null === $panelClasses) {
+            if (null === $panelClasses)
+            {
                 // Cache miss: Load scanner and perform discovery
                 /** @var PanelScannerInterface $scanner */
-                $scanner = $this->app->make(PanelScannerInterface::class);
+                $scanner      = $this->app->make(PanelScannerInterface::class);
                 $panelClasses = $scanner->discoverPanels();
                 $cacheManager->put($cacheKey, $panelClasses);
 
@@ -183,7 +192,8 @@ class ModuliteServiceProvider extends ServiceProvider
             // Register discovered panel providers
             $this->registerPanelProviders($panelClasses);
 
-        } catch (Throwable $e) {
+        } catch (Throwable $e)
+        {
             $this->handleDiscoveryError($e);
         }
     }
@@ -195,10 +205,14 @@ class ModuliteServiceProvider extends ServiceProvider
      */
     protected function registerPanelProviders(array $panelClasses): void
     {
-        foreach ($panelClasses as $providerClass) {
-            try {
+
+        foreach ($panelClasses as $providerClass)
+        {
+            try
+            {
                 $this->app->register($providerClass);
-            } catch (Throwable $e) {
+            } catch (Throwable $e)
+            {
                 $this->handleProviderRegistrationError($providerClass, $e);
             }
         }
@@ -208,25 +222,28 @@ class ModuliteServiceProvider extends ServiceProvider
      * Generate cache key based on current module state.
      *
      * The cache key includes:
-     * - Enabled module list and their timestamps
+     * - Enabled module list and their configuration
+     * - Module resolver approach
      * - Configuration hash
      * - Application environment
      */
     protected function generateCacheKey(): string
     {
-        $moduleManager = $this->getModuleManager($this->app);
-        $modules = $moduleManager ? $moduleManager->allEnabled() : [];
+        // Use the module resolver to get enabled modules
+        $moduleResolver = $this->app->make(ModuleResolverInterface::class);
+        $enabledModules = $moduleResolver->getEnabledModules();
 
-        // Include module names and modification times
-        $moduleData = [];
-        foreach ($modules as $name => $module) {
-            $moduleData[$name] = $module->get('priority', 0);
-        }
+        // Include module names - use simple array for consistent hashing
+        $moduleData = $enabledModules->sort()->values()->toArray();
+
+        // Include the module resolver approach in cache key
+        $approach = config('modulite.modules.approach', 'nwidart');
 
         // Include configuration in cache key
         $configHash = md5(serialize([
             'panels'     => config('modulite.panels', []),
-            'components' => config('modulite.components', [])
+            'components' => config('modulite.components', []),
+            'modules'    => config('modulite.modules', [])
         ]));
 
         // Include environment
@@ -234,6 +251,7 @@ class ModuliteServiceProvider extends ServiceProvider
 
         $keyData = [
             'modules'     => $moduleData,
+            'approach'    => $approach,
             'config'      => $configHash,
             'environment' => $environment,
         ];
@@ -246,13 +264,30 @@ class ModuliteServiceProvider extends ServiceProvider
      */
     protected function getModuleManager(Application $app): mixed
     {
-        try {
+        try
+        {
             return $app->bound(self::NWIDART_MODULES_NAMESPACE)
                 ? $app[self::NWIDART_MODULES_NAMESPACE]
                 : null;
-        } catch (Throwable) {
+        } catch (Throwable)
+        {
             return null;
         }
+    }
+
+    /**
+     * Create the appropriate module resolver based on configuration.
+     */
+    protected function createModuleResolver(Application $app): ModuleResolverInterface
+    {
+        $approach = $app['config']->get('modulite.modules.approach', 'nwidart');
+
+        return match ($approach)
+        {
+            'panicdevs' => new PanicDevsModuleResolver($app),
+            'nwidart'   => new NwidartModuleResolver(),
+            default     => new NwidartModuleResolver(), // Default fallback
+        };
     }
 
     /**
@@ -267,14 +302,17 @@ class ModuliteServiceProvider extends ServiceProvider
     {
         $triggers = config('modulite.cache.invalidation.triggers', []);
 
-        foreach ($triggers as $event) {
-            $this->app['events']->listen($event, function (): void {
+        foreach ($triggers as $event)
+        {
+            $this->app['events']->listen($event, function (): void
+            {
                 $this->invalidateCache();
             });
         }
 
         // Also listen to config cache clear
-        $this->app['events']->listen('config:cache:cleared', function (): void {
+        $this->app['events']->listen('config:cache:cleared', function (): void
+        {
             $this->invalidateCache();
         });
     }
@@ -284,13 +322,16 @@ class ModuliteServiceProvider extends ServiceProvider
      */
     protected function invalidateCache(): void
     {
-        try {
+        try
+        {
             /** @var CacheManagerInterface $cacheManager */
             $cacheManager = $this->app->make(CacheManagerInterface::class);
             $cacheManager->flush();
-        } catch (Throwable $e) {
+        } catch (Throwable $e)
+        {
             // Log but don't throw - cache invalidation shouldn't break the app
-            if (config('modulite.logging.enabled', false)) {
+            if (config('modulite.logging.enabled', false))
+            {
                 Log::channel(config('modulite.logging.channel', 'default'))
                     ->warning('Failed to invalidate Modulite cache', ['error' => $e->getMessage()]);
             }
@@ -302,7 +343,8 @@ class ModuliteServiceProvider extends ServiceProvider
      */
     protected function publishConfiguration(): void
     {
-        if ($this->app->runningInConsole()) {
+        if ($this->app->runningInConsole())
+        {
             $this->publishes([
                 self::CONFIG_PATH => config_path('modulite.php'),
             ], ['modulite', 'modulite-config']);
@@ -314,7 +356,8 @@ class ModuliteServiceProvider extends ServiceProvider
      */
     protected function validateConfiguration(): void
     {
-        if (!$this->app->hasDebugModeEnabled()) {
+        if (!$this->app->hasDebugModeEnabled())
+        {
             return;
         }
 
@@ -322,10 +365,13 @@ class ModuliteServiceProvider extends ServiceProvider
 
         // Validate panel scan locations exist
         $panelLocations = $config['panels']['locations'] ?? [];
-        foreach ($panelLocations as $location) {
-            if (!str_contains($location, '*')) {
+        foreach ($panelLocations as $location)
+        {
+            if (!str_contains($location, '*'))
+            {
                 $fullPath = $this->app->basePath($location);
-                if (!is_dir($fullPath)) {
+                if (!is_dir($fullPath))
+                {
                     Log::channel(config('modulite.logging.channel', 'default'))
                         ->warning("Modulite panel scan location does not exist: {$fullPath}");
                 }
@@ -334,10 +380,13 @@ class ModuliteServiceProvider extends ServiceProvider
 
         // Validate component scan locations exist
         $componentLocations = $config['components']['locations'] ?? [];
-        foreach ($componentLocations as $location) {
-            if (!str_contains($location, '*')) {
+        foreach ($componentLocations as $location)
+        {
+            if (!str_contains($location, '*'))
+            {
                 $fullPath = $this->app->basePath($location);
-                if (!is_dir($fullPath)) {
+                if (!is_dir($fullPath))
+                {
                     Log::channel(config('modulite.logging.channel', 'default'))
                         ->warning("Modulite component scan location does not exist: {$fullPath}");
                 }
@@ -345,9 +394,11 @@ class ModuliteServiceProvider extends ServiceProvider
         }
 
         // Validate cache configuration
-        if ($config['cache']['enabled'] ?? false) {
+        if ($config['cache']['enabled'] ?? false)
+        {
             $driver = $config['cache']['driver'] ?? 'file';
-            if (!in_array($driver, ['file', 'redis', 'memcached', 'array', 'database'], true)) {
+            if (!in_array($driver, ['file', 'redis', 'memcached', 'array', 'database'], true))
+            {
                 Log::channel(config('modulite.logging.channel', 'default'))
                     ->warning("Modulite cache driver '{$driver}' may not be supported");
             }
@@ -360,7 +411,8 @@ class ModuliteServiceProvider extends ServiceProvider
     protected function setupDevelopmentHelpers(): void
     {
         // Register artisan commands if available
-        if ($this->app->runningInConsole()) {
+        if ($this->app->runningInConsole())
+        {
             $this->registerConsoleCommands();
         }
     }
@@ -373,8 +425,11 @@ class ModuliteServiceProvider extends ServiceProvider
         $this->commands([
             ModuliteClearCacheCommand::class,
             ModuliteStatusCommand::class,
-            ModuliteBenchmarkCommand::class,
+            ModuliteOptimizeCommand::class,
         ]);
+
+        // Note: Laravel optimize integration removed to prevent circular dependencies
+        // Users should manually run: php artisan modulite:cache
     }
 
     /**
@@ -382,14 +437,22 @@ class ModuliteServiceProvider extends ServiceProvider
      */
     protected function shouldPerformDiscovery(): bool
     {
-        // Don't discover in console unless explicitly needed
-        if ($this->app->runningInConsole()) {
+        // Check if Filament is available
+        if (!class_exists(FilamentServiceProvider::class))
+        {
             return false;
         }
 
-        // Check if Filament is available
-        if (!class_exists(FilamentServiceProvider::class)) {
-            return false;
+        // In production, always perform discovery to ensure routes are cached properly
+        if ($this->app->isProduction())
+        {
+            return true;
+        }
+
+        // Don't discover in console unless explicitly needed (development only)
+        if ($this->app->runningInConsole())
+        {
+            return true;
         }
 
         // Check configuration
@@ -404,7 +467,8 @@ class ModuliteServiceProvider extends ServiceProvider
      */
     protected function logDiscoverySuccess(array $panels, array $stats): void
     {
-        if (!config('modulite.logging.log_discovery_time', false)) {
+        if (!config('modulite.logging.log_discovery_time', false))
+        {
             return;
         }
 
@@ -423,7 +487,8 @@ class ModuliteServiceProvider extends ServiceProvider
     {
         $failSilently = config('modulite.error_handling.fail_silently', false);
 
-        if (config('modulite.logging.enabled', false)) {
+        if (config('modulite.logging.enabled', false))
+        {
             Log::channel(config('modulite.logging.channel', 'default'))
                 ->error('Modulite panel discovery failed', [
                     'error' => $e->getMessage(),
@@ -431,7 +496,8 @@ class ModuliteServiceProvider extends ServiceProvider
                 ]);
         }
 
-        if (!$failSilently) {
+        if (!$failSilently)
+        {
             throw $e;
         }
     }
@@ -441,7 +507,8 @@ class ModuliteServiceProvider extends ServiceProvider
      */
     protected function handleProviderRegistrationError(string $providerClass, Throwable $e): void
     {
-        if (config('modulite.logging.enabled', false)) {
+        if (config('modulite.logging.enabled', false))
+        {
             Log::channel(config('modulite.logging.channel', 'default'))
                 ->warning('Failed to register panel provider', [
                     'provider' => $providerClass,

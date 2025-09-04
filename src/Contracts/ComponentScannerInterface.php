@@ -32,7 +32,7 @@ interface ComponentScannerInterface
      *     'widgets' => ['App\Modules\User\Filament\Admin\Widgets\StatsWidget']
      * ]
      *
-     * @throws \PanicDevs\Modulite\Exceptions\ScanException When scanning fails critically
+     *
      */
     public function discoverComponents(string $panelName): array;
 
@@ -43,7 +43,7 @@ interface ComponentScannerInterface
      * @param string $componentType Component type ('resources', 'pages', 'widgets')
      * @return array<string> Array of fully qualified class names
      *
-     * @throws \PanicDevs\Modulite\Exceptions\ScanException When scanning fails critically
+     *
      */
     public function discoverComponentType(string $panelName, string $componentType): array;
 
