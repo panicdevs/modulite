@@ -73,7 +73,7 @@ class UnifiedCacheManager implements CacheManagerInterface
         {
             unset($this->cache['data'][$key]);
             // Defer cache save to avoid I/O during request
-            if ('production' !== env('APP_ENV'))
+            if (!app()->environment('production'))
             {
                 $this->scheduleDelayedSave();
             }
@@ -220,7 +220,7 @@ class UnifiedCacheManager implements CacheManagerInterface
 
         // Production optimization: use static cache to avoid repeated file includes
         $cacheKey = $this->cacheFile;
-        if ('production' === env('APP_ENV') && isset(static::$staticCache[$cacheKey]))
+        if (app()->environment('production') && isset(static::$staticCache[$cacheKey]))
         {
             $this->cache  = static::$staticCache[$cacheKey];
             $this->loaded = true;
@@ -261,7 +261,7 @@ class UnifiedCacheManager implements CacheManagerInterface
         }
 
         // Store in static cache for production
-        if ('production' === env('APP_ENV'))
+        if (app()->environment('production'))
         {
             static::$staticCache[$cacheKey] = $this->cache;
         }
