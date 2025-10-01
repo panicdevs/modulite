@@ -175,7 +175,21 @@ Choose your module management approach:
 
 ```php
 'modules' => [
-    'approach' => env('MODULITE_APPROACH', 'panicdevs'), // or 'nwidart'
+    'approach' => env('MODULITE_APPROACH', 'panicdevs'), // or 'nwidart' or custom FQCN
+    'scan_only_enabled' => true,
+    'respect_module_priority' => true,
+],
+```
+
+### Custom Module Resolver (FQCN)
+
+You can provide your own fully-qualified class name (FQCN) as the module approach.
+Your class **must implement** the `PanicDevs\Modulite\Contracts\ModuleResolverInterface`.
+
+```php
+// config/modulite.php
+'modules' => [
+    'approach' => \App\CustomModuleResolver::class,
     'scan_only_enabled' => true,
     'respect_module_priority' => true,
 ],
@@ -367,7 +381,7 @@ public function panel(Panel $panel): Panel
         ]);
 }
 
-// ManagerPanelProvider.php  
+// ManagerPanelProvider.php
 public function panel(Panel $panel): Panel
 {
     return $panel

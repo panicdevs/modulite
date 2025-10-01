@@ -167,7 +167,7 @@ class ModuliteOptimizeCommand extends Command
         $moduleData = $enabledModules->sort()->values()->toArray();
 
         // Include the module resolver approach in cache key
-        $approach = config('modulite.modules.approach', 'nwidart');
+        $approach = config('modulite.modules.approach');
 
         // Include configuration in cache key
         $configHash = md5(serialize([

@@ -154,4 +154,15 @@ class NwidartModuleResolver implements ModuleResolverInterface
 
         return $modules;
     }
+
+    /**
+     * Determine whether panels should be registered
+     * before Filament initialization.
+     *
+     * @return bool True if panels must be registered before Filament
+     */
+    public function shouldRegisterPanelsBeforeFilament(): bool
+    {
+        return true;
+    }
 }

@@ -388,10 +388,13 @@ return [
         |--------------------------------------------------------------------------
         |
         | Specify which module management system you're using:
-        | - 'nwidart': Use nwidart/laravel-modules package
-        | - 'panicdevs': Use panicdevs/modules package
+        | - 'nwidart'   : Use nwidart/laravel-modules package
+        | - 'panicdevs' : Use panicdevs/modules package
+        | - custom      : Provide your own custom implementation class
+        |                 (must implement PanicDevs\Modulite\Contracts\ModuleResolverInterface).
         |
-        | This determines how Modulite discovers and interacts with your modules.
+        | Example:
+        | 'approach' => \App\CustomModuleResolver::class,
         |
         */
         'approach' => env('MODULITE_APPROACH', 'panicdevs'),
