@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace PanicDevs\Modulite\Console\Commands;
 
 use Illuminate\Console\Command;
+use PanicDevs\Modulite\Contracts\ModuleResolverInterface;
 use PanicDevs\Modulite\Contracts\PanelScannerInterface;
 
 /**
@@ -40,7 +41,7 @@ class ModuliteStatusCommand extends Command
 
         // Display status
         $this->displayConfiguration();
-        $this->displayModuleStatus($panelScanner);
+        $this->displayModuleStatus();
         $this->displayPanelStatus($panelScanner);
         $this->displayComponentStatus($componentScanner);
         $this->displayCacheStatus($cache);
@@ -101,32 +102,21 @@ class ModuliteStatusCommand extends Command
         $this->newLine();
     }
 
-    protected function displayModuleStatus(PanelScannerInterface $panelScanner): void
+    protected function displayModuleStatus(): void
     {
         $this->info('Module Status:');
 
-        // Get enabled modules using nwidart modules if available
-        $enabledModules = collect();
+        $enabledModules = app(ModuleResolverInterface::class)->getEnabledModules();
 
-        if (class_exists(\Nwidart\Modules\Facades\Module::class))
-        {
-            $enabledModulesArray = \Nwidart\Modules\Facades\Module::allEnabled();
-            foreach ($enabledModulesArray as $module)
-            {
-                $enabledModules->push($module->getName());
-            }
+        if ($enabledModules->isEmpty()){
+            $this->warn('No enabled modules found');
+            return;
         }
 
-        if ($enabledModules->isEmpty())
-        {
-            $this->warn('No enabled modules found');
-        } else
-        {
-            $this->info("Found {$enabledModules->count()} enabled modules:");
-            foreach ($enabledModules as $module)
-            {
-                $this->line("  • {$module}");
-            }
+        $this->info("Found {$enabledModules->count()} enabled modules:");
+
+        foreach ($enabledModules as $module) {
+            $this->line("  • {$module}");
         }
 
         $this->newLine();

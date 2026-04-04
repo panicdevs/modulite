@@ -8,6 +8,7 @@ use Filament\FilamentServiceProvider;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
+use PanicDevs\Modulite\Actions\CreateModuleResolver;
 use PanicDevs\Modulite\Console\Commands\ModuliteClearCacheCommand;
 use PanicDevs\Modulite\Console\Commands\ModuliteStatusCommand;
 use PanicDevs\Modulite\Console\Commands\ModuliteOptimizeCommand;
@@ -16,8 +17,6 @@ use PanicDevs\Modulite\Contracts\ComponentScannerInterface;
 use PanicDevs\Modulite\Contracts\ModuleResolverInterface;
 use PanicDevs\Modulite\Contracts\PanelScannerInterface;
 use PanicDevs\Modulite\Services\ComponentDiscoveryService;
-use PanicDevs\Modulite\Services\ModuleResolvers\NwidartModuleResolver;
-use PanicDevs\Modulite\Services\ModuleResolvers\PanicDevsModuleResolver;
 use PanicDevs\Modulite\Services\PanelScannerService;
 use PanicDevs\Modulite\Services\UnifiedCacheManager;
 use Throwable;
@@ -78,14 +77,15 @@ class ModuliteServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->registerConfiguration();
+
         $this->registerCoreServices();
-        if ('nwidart' === config('modulite.modules.approach'))
-        {
-            $this->app->beforeResolving('filament', fn() => $this->registerPanelDiscovery());
-        } else
-        {
-            $this->registerPanelDiscovery();
-        }
+
+        $this->app
+            ->make(ModuleResolverInterface::class)
+            ->shouldRegisterPanelsBeforeFilament() ?
+                $this->app->beforeResolving('filament', fn () => $this->registerPanelDiscovery()):
+                $this->registerPanelDiscovery();
+
         $this->registerCacheInvalidationListeners();
     }
 
@@ -126,7 +126,10 @@ class ModuliteServiceProvider extends ServiceProvider
         });
 
         // Register ModuleResolver based on configuration
-        $this->app->singleton(ModuleResolverInterface::class, fn(Application $app) => $this->createModuleResolver($app));
+        $this->app->singleton(
+            ModuleResolverInterface::class,
+            fn(Application $app) => (new CreateModuleResolver())->handle($app)
+        );
 
         // Register PanelScannerService with dependencies
         $this->app->singleton(PanelScannerInterface::class, function (Application $app)
@@ -244,7 +247,7 @@ class ModuliteServiceProvider extends ServiceProvider
         $moduleData = $enabledModules->sort()->values()->toArray();
 
         // Include the module resolver approach in cache key
-        $approach = config('modulite.modules.approach', 'nwidart');
+        $approach = config('modulite.modules.approach');
 
         // Include configuration in cache key
         $configHash = md5(serialize([
@@ -280,21 +283,6 @@ class ModuliteServiceProvider extends ServiceProvider
         {
             return null;
         }
-    }
-
-    /**
-     * Create the appropriate module resolver based on configuration.
-     */
-    protected function createModuleResolver(Application $app): ModuleResolverInterface
-    {
-        $approach = $app['config']->get('modulite.modules.approach', 'nwidart');
-
-        return match ($approach)
-        {
-            'panicdevs' => new PanicDevsModuleResolver($app),
-            'nwidart'   => new NwidartModuleResolver(),
-            default     => new NwidartModuleResolver(), // Default fallback
-        };
     }
 
     /**
