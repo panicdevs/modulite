@@ -126,16 +126,11 @@ class ComponentDiscoveryService implements ComponentScannerInterface
      */
     protected function getEnabledComponentTypes(): array
     {
-        static $enabledTypes = null;
-
-        if (null === $enabledTypes)
-        {
-            $enabledTypes = [
-                'resources' => $this->isComponentTypeEnabled('resources'),
-                'pages'     => $this->isComponentTypeEnabled('pages'),
-                'widgets'   => $this->isComponentTypeEnabled('widgets'),
-            ];
-        }
+        $enabledTypes = [
+            'resources' => $this->isComponentTypeEnabled('resources'),
+            'pages'     => $this->isComponentTypeEnabled('pages'),
+            'widgets'   => $this->isComponentTypeEnabled('widgets'),
+        ];
 
         return $enabledTypes;
     }
@@ -453,8 +448,9 @@ class ComponentDiscoveryService implements ComponentScannerInterface
      */
     protected function scanDirectoryForComponents(string $path, string $moduleName, string $type): Collection
     {
-        $components = collect();
-        $iterator   = $this->createDirectoryIterator($path);
+        $components      = collect();
+        $iterator        = $this->createDirectoryIterator($path);
+        $validateClasses = $this->shouldValidateClasses();
 
         foreach ($iterator as $file)
         {
@@ -465,15 +461,71 @@ class ComponentDiscoveryService implements ComponentScannerInterface
 
             $this->stats['scanned_files']++;
 
+            if ($validateClasses)
+            {
+                // Validation path: load the class and verify its inheritance
+                // (used in development, where scan cost is acceptable)
+                $className = $this->extractClassNameFromFile($file->getPathname(), $moduleName);
+
+                if ($className && $this->isValidComponent($className, $type))
+                {
+                    $components->push($className);
+                }
+
+                continue;
+            }
+
+            // Production path: rely on the configured naming convention only,
+            // avoiding class loading (and its memory cost) during scans
+            if (!$this->matchesNamingPattern($file->getFilename(), $this->getNamingPattern($type)))
+            {
+                continue;
+            }
+
             $className = $this->extractClassNameFromFile($file->getPathname(), $moduleName);
 
-            if ($className && $this->isValidComponent($className, $type))
+            if ($className)
             {
                 $components->push($className);
             }
         }
 
         return $components;
+    }
+
+    /**
+     * Check whether discovered classes should be loaded and validated.
+     */
+    protected function shouldValidateClasses(): bool
+    {
+        return (bool) config('modulite.components.registration.validate_before_register', false);
+    }
+
+    /**
+     * Get the naming pattern for a component type.
+     */
+    protected function getNamingPattern(string $type): string
+    {
+        return config("modulite.components.types.{$type}.naming_pattern", match ($type)
+        {
+            'resources' => '*Resource.php',
+            'pages'     => '*.php',
+            'widgets'   => '*.php',
+            default     => '*.php',
+        });
+    }
+
+    /**
+     * Check whether a filename matches the component naming pattern.
+     */
+    protected function matchesNamingPattern(string $filename, string $pattern): bool
+    {
+        if ('*.php' === $pattern)
+        {
+            return true;
+        }
+
+        return Str::is($pattern, $filename);
     }
 
     /**

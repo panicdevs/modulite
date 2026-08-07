@@ -119,9 +119,6 @@ class ModulitePlugin implements Plugin
                 return;
             }
 
-            // Mark panel as discovered to prevent duplicate work
-            static::$discoveredPanels[$panelId] = true;
-
             // Skip attribute-based configuration - use pure discovery
             // $this->applyPanelConfigurationOptimized($panel);
 
@@ -130,6 +127,10 @@ class ModulitePlugin implements Plugin
 
             // Register components with minimal overhead
             $this->registerComponentsOptimized($panel, $components);
+
+            // Only mark the panel as discovered after a successful registration
+            // so a failed attempt is retried on the next request
+            static::$discoveredPanels[$panelId] = true;
 
             // Only log in development mode
             if (app()->hasDebugModeEnabled())
@@ -166,8 +167,9 @@ class ModulitePlugin implements Plugin
             return static::$staticCache[$staticKey];
         }
 
-        // Layer 2: Persistent cache
-        $cacheKey = "components.{$panelId}";
+        // Layer 2: Persistent cache (same key as the discovery service so a
+        // CLI-warmed cache is reused by web requests without rescanning)
+        $cacheKey = "panel_components:{$panelId}";
 
         if ($this->isCachingEnabled())
         {
@@ -401,14 +403,7 @@ class ModulitePlugin implements Plugin
      */
     protected function shouldPerformDiscovery(): bool
     {
-        static $shouldPerform = null;
-
-        if (null === $shouldPerform)
-        {
-            $shouldPerform = config('modulite.components.registration.auto_register', true);
-        }
-
-        return $shouldPerform;
+        return (bool) config('modulite.components.registration.auto_register', true);
     }
 
     /**
@@ -416,15 +411,8 @@ class ModulitePlugin implements Plugin
      */
     protected function isCachingEnabled(): bool
     {
-        static $cacheEnabled = null;
-
-        if (null === $cacheEnabled)
-        {
-            $cacheEnabled = $this->options['cache_enabled']
-                ?? config('modulite.cache.enabled', true);
-        }
-
-        return $cacheEnabled;
+        return (bool) ($this->options['cache_enabled']
+            ?? config('modulite.cache.enabled', true));
     }
 
     /**
@@ -432,15 +420,8 @@ class ModulitePlugin implements Plugin
      */
     protected function isValidationEnabled(): bool
     {
-        static $validationEnabled = null;
-
-        if (null === $validationEnabled)
-        {
-            $validationEnabled = $this->options['validate_components']
-                ?? config('modulite.components.registration.validate_before_register', false);
-        }
-
-        return $validationEnabled;
+        return (bool) ($this->options['validate_components']
+            ?? config('modulite.components.registration.validate_before_register', false));
     }
 
     /**
@@ -465,15 +446,7 @@ class ModulitePlugin implements Plugin
      */
     protected function getComponentScanner(): ComponentScannerInterface
     {
-        // Use static cache to avoid repeated service container lookups
-        static $instance = null;
-
-        if (null === $instance)
-        {
-            $instance = app(ComponentScannerInterface::class);
-        }
-
-        return $instance;
+        return app(ComponentScannerInterface::class);
     }
 
     /**
@@ -481,15 +454,7 @@ class ModulitePlugin implements Plugin
      */
     protected function getCacheManager(): CacheManagerInterface
     {
-        // Use static cache to avoid repeated service container lookups
-        static $instance = null;
-
-        if (null === $instance)
-        {
-            $instance = app(CacheManagerInterface::class);
-        }
-
-        return $instance;
+        return app(CacheManagerInterface::class);
     }
 
 
@@ -506,13 +471,15 @@ class ModulitePlugin implements Plugin
     {
         $panelId = $this->getPanelId($panel);
 
-        if (config('modulite.error_handling.fail_silently', false))
-        {
-            $this->logRegistrationError($panelId, $e);
-            return;
-        }
+        // Allow the panel to retry discovery on the next request
+        unset(static::$discoveredPanels[$panelId]);
 
-        throw $e;
+        $this->logRegistrationError($panelId, $e);
+
+        if (!config('modulite.error_handling.fail_silently', false))
+        {
+            throw $e;
+        }
     }
 
     /**
@@ -540,7 +507,7 @@ class ModulitePlugin implements Plugin
      */
     protected function logRegistrationError(string $panelId, Throwable $e): void
     {
-        if (!config('modulite.logging.enabled', false))
+        if (!config('modulite.error_handling.log_errors', true))
         {
             return;
         }
