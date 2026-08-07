@@ -251,7 +251,7 @@ return [
         | request. Recommended: true for production, false for development.
         |
         */
-        'enabled' => env('MODULITE_CACHE_ENABLED', !env('APP_DEBUG', false)),
+        'enabled' => filter_var(env('MODULITE_CACHE_ENABLED', !env('APP_DEBUG', false)), FILTER_VALIDATE_BOOLEAN),
 
         /*
         |--------------------------------------------------------------------------
@@ -275,7 +275,7 @@ return [
         | Set to 0 in production for maximum performance (never expires).
         |
         */
-        'ttl' => env('MODULITE_CACHE_TTL', env('APP_DEBUG', false) ? 300 : 0),
+        'ttl' => (int) env('MODULITE_CACHE_TTL', env('APP_DEBUG', false) ? 300 : 0),
 
         /*
         |--------------------------------------------------------------------------
