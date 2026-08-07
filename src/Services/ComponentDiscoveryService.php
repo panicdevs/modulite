@@ -437,8 +437,13 @@ class ComponentDiscoveryService implements ComponentScannerInterface
 
         $uniqueComponents = $components->unique();
 
-        // Store the result
-        $this->cache->put($cacheKey, $uniqueComponents->toArray());
+        // Never cache an empty result: a transient failure (e.g. an empty
+        // enabled-module list) would otherwise poison the cache and keep the
+        // panel menu empty until the cache is cleared.
+        if ($uniqueComponents->isNotEmpty())
+        {
+            $this->cache->put($cacheKey, $uniqueComponents->toArray());
+        }
 
         return $uniqueComponents;
     }
@@ -674,8 +679,13 @@ class ComponentDiscoveryService implements ComponentScannerInterface
         // Get modules from the resolver
         $modules = $this->moduleResolver->getEnabledModules();
 
-        // Store the result
-        $this->cache->put($cacheKey, $modules->toArray());
+        // Never cache an empty result: a transient resolver failure would
+        // otherwise poison the cache and disable all discovery until the
+        // cache is cleared.
+        if ($modules->isNotEmpty())
+        {
+            $this->cache->put($cacheKey, $modules->toArray());
+        }
 
         return $modules;
     }
