@@ -31,8 +31,8 @@ class UnifiedCacheManager implements CacheManagerInterface
     public function __construct(array $config = [])
     {
         $this->cacheFile = $config['file'] ?? base_path('bootstrap/cache/modulite.php');
-        $this->enabled   = $config['enabled'] ?? true;
-        $this->ttl       = $config['ttl'] ?? 3600;
+        $this->enabled   = (bool) ($config['enabled'] ?? true);
+        $this->ttl       = (int) ($config['ttl'] ?? 3600);
     }
 
     /**

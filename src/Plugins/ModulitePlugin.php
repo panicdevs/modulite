@@ -59,24 +59,25 @@ class ModulitePlugin implements Plugin
     protected ?CacheManagerInterface $cacheManager = null;
 
     /**
-     * Static cache for repeated requests to avoid service container lookups.
-     * @var array<string, mixed>
+     * Request-scoped cache of discovered components per panel.
+     * @var array<string, array<string, array<int, string>>>
      */
-    protected static array $staticCache = [];
+    protected array $componentCache = [];
 
     /**
      * Flag to track if discovery has been performed for this panel.
      * @var array<string, bool>
      */
-    protected static array $discoveredPanels = [];
+    protected array $discoveredPanels = [];
 
     /**
      * Clear all static caches (useful for testing or cache invalidation).
+     *
+     * @deprecated Discovery state is now scoped to the application instance,
+     *             so a fresh application always starts with empty state.
      */
     public static function clearStaticCaches(): void
     {
-        static::$staticCache      = [];
-        static::$discoveredPanels = [];
     }
 
     /**
@@ -114,7 +115,7 @@ class ModulitePlugin implements Plugin
             $panelId = $this->getPanelId($panel);
 
             // Fast path: avoid duplicate discovery for the same panel
-            if (isset(static::$discoveredPanels[$panelId]))
+            if (isset($this->discoveredPanels[$panelId]))
             {
                 return;
             }
@@ -130,7 +131,7 @@ class ModulitePlugin implements Plugin
 
             // Only mark the panel as discovered after a successful registration
             // so a failed attempt is retried on the next request
-            static::$discoveredPanels[$panelId] = true;
+            $this->discoveredPanels[$panelId] = true;
 
             // Only log in development mode
             if (app()->hasDebugModeEnabled())
@@ -160,11 +161,10 @@ class ModulitePlugin implements Plugin
      */
     protected function discoverComponentsOptimized(string $panelId): array
     {
-        // Layer 1: Static cache for current request
-        $staticKey = "components_{$panelId}";
-        if (isset(static::$staticCache[$staticKey]))
+        // Layer 1: In-memory cache for the current application instance
+        if (isset($this->componentCache[$panelId]))
         {
-            return static::$staticCache[$staticKey];
+            return $this->componentCache[$panelId];
         }
 
         // Layer 2: Persistent cache (same key as the discovery service so a
@@ -179,8 +179,8 @@ class ModulitePlugin implements Plugin
             $components = $this->performComponentDiscovery($panelId);
         }
 
-        // Store in static cache for this request
-        static::$staticCache[$staticKey] = $components;
+        // Store in memory for this application instance
+        $this->componentCache[$panelId] = $components;
 
         return $components;
     }
@@ -472,7 +472,7 @@ class ModulitePlugin implements Plugin
         $panelId = $this->getPanelId($panel);
 
         // Allow the panel to retry discovery on the next request
-        unset(static::$discoveredPanels[$panelId]);
+        unset($this->discoveredPanels[$panelId]);
 
         $this->logRegistrationError($panelId, $e);
 
