@@ -190,7 +190,14 @@ class ModuliteServiceProvider extends ServiceProvider
                 /** @var PanelScannerInterface $scanner */
                 $scanner      = $this->app->make(PanelScannerInterface::class);
                 $panelClasses = $scanner->discoverPanels();
-                $cacheManager->put($cacheKey, $panelClasses);
+
+                // Never cache a failed scan: a silently failed discovery would
+                // otherwise poison the cache with an empty panel list until the
+                // cache is cleared, taking every panel offline.
+                if (($scanner->getScanStats()['errors'] ?? 0) === 0)
+                {
+                    $cacheManager->put($cacheKey, $panelClasses);
+                }
 
                 // Log only when actually scanning (development)
                 $this->logDiscoverySuccess($panelClasses, $scanner->getScanStats());
