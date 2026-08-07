@@ -72,9 +72,15 @@ class ModuliteOptimizeCommand extends Command
             $panels     = $panelScanner->discoverPanels();
             $panelCount = count($panels);
 
-            // Store panels in cache using the same key as the service provider
+            // Store panels in cache using the same key as the service provider.
+            // A failed scan (errors > 0) is never cached so it cannot poison
+            // the cache with an empty panel list.
             $panelCacheKey = $this->generatePanelCacheKey($moduleResolver);
-            $cacheManager->put($panelCacheKey, $panels);
+
+            if (($panelScanner->getScanStats()['errors'] ?? 0) === 0)
+            {
+                $cacheManager->put($panelCacheKey, $panels);
+            }
 
             $this->line("  <fg=green>✓</> Found {$panelCount} panel providers");
 
