@@ -144,4 +144,15 @@ class PanicDevsModuleResolver implements ModuleResolverInterface
 
         return $this->moduleService;
     }
+
+    /**
+     * Determine whether panels should be registered
+     * before Filament initialization.
+     *
+     * @return bool True if panels must be registered before Filament
+     */
+    public function shouldRegisterPanelsBeforeFilament(): bool
+    {
+        return false;
+    }
 }
